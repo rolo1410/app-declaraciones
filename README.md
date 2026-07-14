@@ -20,7 +20,14 @@ Los ejecutables se compilan automáticamente con GitHub Actions. Dos lugares de 
   en GitHub; los artifacts caducan a los 90 días.)
 
 Para lanzar una compilación manual: pestaña **Actions** → «Compilar ejecutables» →
-botón **Run workflow**. Para publicar una versión nueva en Releases:
+botón **Run workflow**.
+
+**Ahorro de compilaciones:** si el código (`app/`, `requirements.txt`) no cambió
+desde la última versión etiquetada, el workflow lo detecta y omite la compilación
+(los ejecutables anteriores siguen disponibles en Releases). Para compilar de
+todas formas, marque la casilla «forzar» al lanzar el workflow manualmente.
+
+Para publicar una versión nueva en Releases:
 
 ```bash
 git tag v1.0.1 && git push origin v1.0.1

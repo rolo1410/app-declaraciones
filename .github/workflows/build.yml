@@ -2,12 +2,49 @@ name: Compilar ejecutables
 
 on:
   workflow_dispatch:       # botón "Run workflow" en la pestaña Actions
+    inputs:
+      forzar:
+        description: "Compilar aunque el código no haya cambiado"
+        type: boolean
+        default: false
   push:
     tags: ["v*"]           # también al publicar una etiqueta de versión (ej. v1.0.0)
 
 jobs:
+  cambios:
+    name: ¿Cambió el código?
+    runs-on: ubuntu-latest
+    outputs:
+      construir: ${{ steps.detectar.outputs.construir }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detectar
+        env:
+          FORZAR: ${{ inputs.forzar }}
+        run: |
+          if [ "$FORZAR" = "true" ]; then
+            echo "Compilación forzada por el usuario."
+            echo "construir=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          anterior=$(git tag --sort=-creatordate | grep '^v' | grep -vx "$GITHUB_REF_NAME" | head -1 || true)
+          if [ -z "$anterior" ]; then
+            echo "No hay versión anterior; se compila."
+            echo "construir=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if git diff --quiet "$anterior" HEAD -- app requirements.txt .github/workflows/build.yml; then
+            echo "Sin cambios en el código desde $anterior; se omite la compilación."
+            echo "construir=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Cambios detectados desde $anterior; se compila."
+            echo "construir=true" >> "$GITHUB_OUTPUT"
+          fi
+
   pruebas:
     name: Pruebas unitarias
+    needs: cambios
+    if: needs.cambios.outputs.construir == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
