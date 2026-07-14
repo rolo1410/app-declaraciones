@@ -7,6 +7,25 @@ casilleros de la declaración de IVA en SRI en línea (sucesor del Formulario 10
 > **Importante:** los valores son un pre-cálculo de apoyo. Verifíquelos siempre
 > contra el prellenado de SRI en línea y, en caso de duda, con un contador.
 
+## Descargar los ejecutables
+
+Los ejecutables se compilan automáticamente con GitHub Actions. Dos lugares de descarga:
+
+- **Releases (recomendado):** <https://github.com/USUARIO/declaraciones-iva/releases/latest>
+  — `DeclaracionIVA.exe` (Windows) y `DeclaracionIVA-macOS.zip` (Mac). Se publica
+  una versión nueva cada vez que se crea una etiqueta `v*` (ej. `v1.0.0`).
+- **Artifacts de una compilación puntual:** <https://github.com/USUARIO/declaraciones-iva/actions>
+  → entrar a la ejecución más reciente del workflow «Compilar ejecutables» →
+  sección **Artifacts** al final de la página. (Requiere haber iniciado sesión
+  en GitHub; los artifacts caducan a los 90 días.)
+
+Para lanzar una compilación manual: pestaña **Actions** → «Compilar ejecutables» →
+botón **Run workflow**. Para publicar una versión nueva en Releases:
+
+```bash
+git tag v1.0.1 && git push origin v1.0.1
+```
+
 ## Requisitos
 
 - Python 3.10 o superior (con Tkinter, incluido en el instalador oficial de python.org).
