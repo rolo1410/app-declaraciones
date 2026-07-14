@@ -1,0 +1,20 @@
+# Entorno y artefactos de Python
+.venv/
+__pycache__/
+*.pyc
+
+# Salidas de PyInstaller
+build/
+dist/
+*.spec
+
+# Datos personales del SRI: NO subir al repositorio
+*_Recibidos.txt
+*_Emitidos.txt
+
+# Reportes generados
+declaracion_iva_*.xlsx
+declaracion_iva_*.pdf
+
+# macOS
+.DS_Store

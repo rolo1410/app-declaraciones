@@ -1,0 +1,51 @@
+name: Compilar ejecutables
+
+on:
+  workflow_dispatch:       # botón "Run workflow" en la pestaña Actions
+  push:
+    tags: ["v*"]           # también al publicar una etiqueta de versión (ej. v1.0.0)
+
+jobs:
+  pruebas:
+    name: Pruebas unitarias
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -v
+
+  windows:
+    name: Ejecutable Windows (.exe)
+    needs: pruebas
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pyinstaller
+      - run: pyinstaller --windowed --onefile --name DeclaracionIVA app/main.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DeclaracionIVA-Windows
+          path: dist/DeclaracionIVA.exe
+
+  macos:
+    name: Aplicación macOS (.app)
+    needs: pruebas
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pyinstaller
+      - run: pyinstaller --windowed --name DeclaracionIVA app/main.py
+      - run: ditto -c -k --keepParent dist/DeclaracionIVA.app dist/DeclaracionIVA-macOS.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DeclaracionIVA-macOS
+          path: dist/DeclaracionIVA-macOS.zip
