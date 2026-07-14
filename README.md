@@ -11,10 +11,10 @@ casilleros de la declaración de IVA en SRI en línea (sucesor del Formulario 10
 
 Los ejecutables se compilan automáticamente con GitHub Actions. Dos lugares de descarga:
 
-- **Releases (recomendado):** <https://github.com/USUARIO/declaraciones-iva/releases/latest>
+- **Releases (recomendado):** <https://github.com/rolo1410/app-declaraciones/releases/latest>
   — `DeclaracionIVA.exe` (Windows) y `DeclaracionIVA-macOS.zip` (Mac). Se publica
   una versión nueva cada vez que se crea una etiqueta `v*` (ej. `v1.0.0`).
-- **Artifacts de una compilación puntual:** <https://github.com/USUARIO/declaraciones-iva/actions>
+- **Artifacts de una compilación puntual:** <https://github.com/rolo1410/app-declaraciones/actions>
   → entrar a la ejecución más reciente del workflow «Compilar ejecutables» →
   sección **Artifacts** al final de la página. (Requiere haber iniciado sesión
   en GitHub; los artifacts caducan a los 90 días.)
