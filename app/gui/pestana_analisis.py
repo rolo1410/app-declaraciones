@@ -8,7 +8,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from ..core import analizador as az
-from .recursos import cargar_imagen, fmt
+from .recursos import fmt
 
 
 class PestanaAnalisis(ttk.Frame):
@@ -73,13 +73,6 @@ class PestanaAnalisis(ttk.Frame):
         vs.pack(side="right", fill="y")
         self.tree.bind("<<TreeviewSelect>>", self._on_seleccion)
         paned.add(frm_tabla, weight=3)
-
-        # Marca de agua sobre la tabla vacía.
-        self._wm_img = cargar_imagen("watermark.png", subsample=2)
-        self._wm_label = None
-        if self._wm_img is not None:
-            self._wm_label = tk.Label(self.tree, image=self._wm_img, bg="white", borderwidth=0)
-            self._wm_label.place(relx=0.5, rely=0.5, anchor="center")
 
         # Derecha: detalle del comprobante seleccionado
         frm_det = ttk.LabelFrame(paned, text="Detalle del comprobante", padding=8)
@@ -173,9 +166,6 @@ class PestanaAnalisis(ttk.Frame):
             self.tree.focus_set()
 
     def _poblar_tabla(self) -> None:
-        if self._wm_label is not None and self._comprobantes:
-            self._wm_label.destroy()
-            self._wm_label = None
         self.tree.delete(*self.tree.get_children())
         self._items.clear()
         for i, c in enumerate(self._comprobantes):

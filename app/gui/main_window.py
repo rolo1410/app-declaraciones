@@ -7,13 +7,15 @@ calcular los casilleros del formulario de IVA.
 """
 from __future__ import annotations
 
+import os
+import platform
+
 import tkinter as tk
 from tkinter import ttk
 
 from .pestana_analisis import PestanaAnalisis
 from .pestana_declaracion import PestanaDeclaracion
 from .pestana_descarga import PestanaDescarga
-from .recursos import cargar_imagen
 
 TITULO = "Comprobantes SRI — Descarga, Análisis y Declaración de IVA"
 
@@ -24,25 +26,6 @@ class App(tk.Tk):
         self.title(TITULO)
         self.geometry("1180x760")
         self.minsize(980, 640)
-
-        # Ícono de la aplicación (ventana / barra de tareas).
-        self._icono = cargar_imagen("icon.png")
-        if self._icono is not None:
-            try:
-                self.iconphoto(True, self._icono)
-            except Exception:  # noqa: BLE001
-                pass
-
-        # Encabezado con el logo (branding).
-        banner = tk.Frame(self, bg="white")
-        banner.pack(fill="x")
-        self._logo = cargar_imagen("icon.png", subsample=8)  # 512 -> ~64 px
-        if self._logo is not None:
-            tk.Label(banner, image=self._logo, bg="white").pack(side="left", padx=10, pady=6)
-        tk.Label(
-            banner, text="Comprobantes SRI — IVA Ecuador",
-            bg="white", fg="#4a8b5c", font=("Helvetica", 15, "bold"),
-        ).pack(side="left", pady=6)
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill="both", expand=True, padx=6, pady=(0, 6))
@@ -58,6 +41,38 @@ class App(tk.Tk):
         notebook.add(self.pestana_descarga, text="  1 · Descarga  ")
         notebook.add(self.pestana_analisis, text="  2 · Análisis  ")
         notebook.add(self.pestana_declaracion, text="  3 · Declaración  ")
+
+        # En macOS, una app lanzada fuera de un bundle .app no se activa sola:
+        # el primer clic solo enfoca la ventana en vez de accionar el control.
+        # Traerla al frente y darle foco evita esa sensación de "no hace clic".
+        self.after(200, self._traer_al_frente)
+
+    def _traer_al_frente(self) -> None:
+        """Activa la ventana en macOS cuando se lanza desde la terminal.
+
+        Sin esto la app no queda como aplicación frontal y el primer clic sobre
+        un control (p. ej. el texto de un botón) solo sirve para activar la
+        ventana en vez de accionarlo. En el ejecutable empaquetado (.app) macOS
+        ya la activa y esto no hace falta.
+        """
+        try:
+            self.lift()
+            self.focus_force()
+        except Exception:  # noqa: BLE001
+            pass
+        if platform.system() != "Darwin":
+            return
+        try:
+            import subprocess
+
+            subprocess.run(
+                ["osascript", "-e",
+                 "tell application \"System Events\" to set frontmost of "
+                 f"(first process whose unix id is {os.getpid()}) to true"],
+                check=False, capture_output=True, timeout=3,
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     # -- enlaces entre pestañas --
     def _descarga_completa(self, carpeta: str) -> None:
