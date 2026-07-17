@@ -1,12 +1,21 @@
 # Entorno y artefactos de Python
 .venv/
+venv/
+env/
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
 
-# Salidas de PyInstaller
+# Salidas de PyInstaller (el .spec versionado sí se conserva)
 build/
 dist/
-*.spec
+*.spec.bak
+
+# Perfil persistente de Chrome (reputación reCAPTCHA) y descargas locales
+.sri_descargas/
+descargas/
+*.xml
 
 # Datos personales del SRI: NO subir al repositorio
 *_Recibidos.txt
@@ -15,6 +24,13 @@ dist/
 # Reportes generados
 declaracion_iva_*.xlsx
 declaracion_iva_*.pdf
+analisis_*.csv
+analisis_*.xlsx
 
-# macOS
+# macOS / Windows
 .DS_Store
+Thumbs.db
+
+# Editores
+.vscode/
+.idea/

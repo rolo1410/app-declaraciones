@@ -31,6 +31,10 @@ class Comprobante:
     importe_total: Decimal
     numero_documento_modificado: str = ""
     con_credito: bool = True
+    # Base con tarifa 0 % del propio comprobante. En el archivo TXT no viene
+    # desglosada (queda en 0), pero los XML sí separan la parte gravada de la
+    # parte 0 % dentro de un mismo comprobante (tarifas mixtas).
+    base_tarifa_cero: Decimal = Decimal("0")
     advertencias: list[str] = field(default_factory=list)
 
     @property

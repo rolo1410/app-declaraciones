@@ -1,49 +1,58 @@
-# Asistente de Declaración de IVA — SRI Ecuador (impuesto 2011)
+# Comprobantes SRI — Descarga, Análisis y Declaración de IVA (Ecuador)
 
-Aplicación de escritorio (macOS y Windows) que procesa el archivo TXT de
-**comprobantes recibidos** descargado del SRI y calcula los valores de los
-casilleros de la declaración de IVA en SRI en línea (sucesor del Formulario 104).
+Aplicación de escritorio (macOS y Windows) que integra en **una sola app con tres
+pestañas** todo el flujo de la declaración de IVA en SRI en línea (sucesor del
+Formulario 104):
 
-> **Importante:** los valores son un pre-cálculo de apoyo. Verifíquelos siempre
-> contra el prellenado de SRI en línea y, en caso de duda, con un contador.
+1. **Descarga** — descarga automatizada de los XML de comprobantes electrónicos
+   **recibidos** desde el portal [SRI en línea](https://srienlinea.sri.gob.ec)
+   (Playwright + Chrome real, supera el reCAPTCHA v3).
+2. **Análisis** — lee los XML descargados, los lista con navegación por teclado,
+   muestra los **totales del lote** (base gravada / 0 %, IVA por tarifa,
+   retenido) y **exporta a CSV/Excel**.
+3. **Declaración** — clasifica las compras (con/sin derecho a crédito) y calcula
+   los **casilleros** del formulario de IVA, con exportación a Excel y PDF.
+
+El flujo natural es continuo: **Descargar → Análisis → «Enviar a Declaración»**,
+sin salir de la aplicación ni manipular archivos intermedios.
+
+> **Importante:** los valores de la declaración son un pre-cálculo de apoyo.
+> Verifíquelos siempre contra el prellenado de SRI en línea y, en caso de duda,
+> con un contador.
 
 ## Descargar los ejecutables
 
-Los ejecutables se compilan automáticamente con GitHub Actions. Dos lugares de descarga:
+Los ejecutables se compilan automáticamente con GitHub Actions:
 
 - **Releases (recomendado):** <https://github.com/rolo1410/app-declaraciones/releases/latest>
-  — `DeclaracionIVA.exe` (Windows) y `DeclaracionIVA-macOS.zip` (Mac). Se publica
-  una versión nueva cada vez que se crea una etiqueta `v*` (ej. `v1.0.0`).
-- **Artifacts de una compilación puntual:** <https://github.com/rolo1410/app-declaraciones/actions>
-  → entrar a la ejecución más reciente del workflow «Compilar ejecutables» →
-  sección **Artifacts** al final de la página. (Requiere haber iniciado sesión
-  en GitHub; los artifacts caducan a los 90 días.)
+  — `ComprobantesSRI-windows.zip` y `ComprobantesSRI-macOS.zip`. Se publica una
+  versión nueva cada vez que se crea una etiqueta `v*` (ej. `v2.0.0`).
+- **Artifacts de una compilación puntual:** pestaña **Actions** → ejecución más
+  reciente del workflow «Compilar ejecutables» → sección **Artifacts**.
 
-Para lanzar una compilación manual: pestaña **Actions** → «Compilar ejecutables» →
-botón **Run workflow**.
+Cada `.zip` es una carpeta *onedir*: descomprima **toda** la carpeta y ejecute el
+binario que está dentro (en Windows, `ComprobantesSRI.exe`).
 
-**Ahorro de compilaciones:** si el código (`app/`, `requirements.txt`) no cambió
-desde la última versión etiquetada, el workflow lo detecta y omite la compilación
-(los ejecutables anteriores siguen disponibles en Releases). Para compilar de
-todas formas, marque la casilla «forzar» al lanzar el workflow manualmente.
+> **Requisito en la máquina destino:** tener **Google Chrome** instalado (la
+> pestaña Descarga usa el Chrome del sistema para superar el reCAPTCHA).
 
 Para publicar una versión nueva en Releases:
 
 ```bash
-git tag v1.0.1 && git push origin v1.0.1
+git tag v2.0.0 && git push origin v2.0.0
 ```
 
-## Requisitos
+## Requisitos (desarrollo)
 
-- Python 3.10 o superior (con Tkinter, incluido en el instalador oficial de python.org).
-- Dependencias para exportar reportes: `pip install -r requirements.txt`.
-
-## Instalación
+- Python 3.10 o superior (con Tkinter, incluido en el instalador de python.org).
+- Google Chrome instalado (pestaña Descarga).
+- Dependencias:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+python -m playwright install chromium   # respaldo; se prefiere Chrome real
 ```
 
 ## Uso — interfaz gráfica
@@ -52,66 +61,99 @@ pip install -r requirements.txt
 python -m app.main
 ```
 
-1. **Cargar archivo Recibidos…** — seleccione el TXT descargado del SRI
-   (ej. `0603545351001_Recibidos.txt`) y elija el período (mes).
-2. **Pestaña 1 · Comprobantes recibidos** — revise la clasificación de cada
-   factura. Doble clic alterna el derecho a crédito tributario. Sugerencia
-   inicial: facturas al RUC → con crédito; a la cédula → sin crédito (gasto
-   personal). Ingrese además las ventas brutas del período (el valor que el
-   SRI prellena en el campo 401) y los contadores de comprobantes emitidos.
-3. **Calcular declaración** — la pestaña 2 muestra cada casillero con su valor
-   y el resumen (impuesto a pagar o crédito a favor).
-4. **Exportar** — genere el reporte en Excel (casilleros + detalle de facturas)
-   o PDF para tenerlo a mano al llenar SRI en línea.
+### 1 · Descarga
+Ingrese RUC/cédula y clave, seleccione año/mes/día y los tipos de comprobante,
+elija la carpeta de descarga e **Iniciar descarga**. Se abre una ventana de
+Chrome (modo visible) que hace todo el proceso; al terminar, la app pasa
+automáticamente a **Análisis** apuntando a la carpeta descargada.
 
-## Uso — línea de comandos
+### 2 · Análisis
+Revise los comprobantes y los totales del lote. Exporte a CSV/Excel si lo desea.
+Pulse **«Enviar a Declaración ▸»** para pasar las facturas al cálculo del IVA.
+
+### 3 · Declaración
+- Doble clic en una factura alterna su derecho a crédito tributario. Sugerencia
+  inicial: facturas al RUC → con crédito; a la cédula → sin crédito (gasto
+  personal).
+- Ingrese las ventas brutas (campo 401 prellenado por el SRI) y los contadores
+  de comprobantes emitidos.
+- **Calcular declaración** muestra cada casillero con su valor y el resumen
+  (impuesto a pagar o crédito a favor).
+- **Exportar** a Excel o PDF.
+
+También puede alimentar la declaración con un **archivo TXT de «Recibidos»**
+(botón «Cargar archivo Recibidos (TXT)…») si prefiere ese flujo.
+
+## Uso — línea de comandos (declaración desde TXT)
 
 ```bash
 python -m app.main 0603545351001_Recibidos.txt --periodo 2026-06 --ventas 5586.96
 python -m app.main archivo.txt --todas-con-credito     # todas las compras con crédito
 ```
 
+## Sobre el reCAPTCHA (pestaña Descarga)
+
+La consulta del SRI está protegida por **reCAPTCHA v3** (invisible, por puntaje).
+La app lo supera automáticamente usando **Chrome real** (`channel="chrome"`), un
+**perfil persistente** en `~/.sri_descargas/perfil_chrome` que acumula reputación
+entre ejecuciones (*no borre esa carpeta*), y movimientos de mouse "humanos" con
+reintentos. Por eso el **modo headless no se recomienda**.
+
 ## Pruebas
 
 ```bash
-python -m unittest discover -s tests -v
+python -m pytest tests/ -q
 ```
 
-## Empaquetado (ejecutables) — Fase 4
+## Empaquetado (ejecutables)
 
-Cada ejecutable se genera **en su propio sistema operativo** con PyInstaller:
+Se empaqueta con **PyInstaller** usando el spec `comprobantes_sri.spec` (incluye
+el driver de Playwright y los `assets/`, pero no los navegadores):
 
 ```bash
-pip install pyinstaller
-
-# macOS (genera dist/DeclaracionIVA.app)
-pyinstaller --windowed --name DeclaracionIVA --osx-bundle-identifier ec.kuya.declaraciones app/main.py
-
-# Windows (genera dist\DeclaracionIVA.exe)
-pyinstaller --windowed --onefile --name DeclaracionIVA app\main.py
+./build.sh
 ```
 
-Notas:
-- En macOS, para distribuir fuera de su equipo necesitará firmar/notarizar la app
-  o los usuarios deberán abrirla con clic derecho → Abrir la primera vez.
-- En Windows, SmartScreen puede pedir confirmación por ser un ejecutable sin firma.
+Diagnóstico incluido: `ComprobantesSRI --selftest` verifica que Playwright puede
+lanzar Chrome y escribe el resultado en `<temp>/sri_selftest.log` (código 0 = OK).
+
+En la nube, `.github/workflows/build.yml` compila Windows y macOS y publica los
+`.zip` en **Releases** al etiquetar `vX.Y.Z`.
 
 ## Estructura del proyecto
 
 ```
-app/core/       modelos, parser del TSV, clasificador y calculadora de casilleros
-app/gui/        interfaz gráfica Tkinter
-app/export/     reportes Excel (openpyxl) y PDF (reportlab)
-tests/          pruebas unitarias (usa el archivo real de junio 2026 como caso base)
-PLAN.md         planificación y reglas tributarias aplicadas
+launcher.py               Punto de entrada del ejecutable (imports absolutos)
+comprobantes_sri.spec     Configuración de PyInstaller
+assets/                   Íconos y marca de agua
+app/
+  main.py                 CLI (declaración desde TXT) + GUI + --selftest
+  core/
+    sri_downloader.py     Descarga automatizada (Playwright)
+    analizador.py         Parseo de XML + totales del lote + exportación
+    adaptador.py          Puente XML → modelo de la declaración
+    parser.py             Lectura del TXT de «Recibidos» (flujo alterno)
+    models.py             Modelos de la declaración (Decimal)
+    clasificador.py       Clasificación con/sin crédito
+    calculadora.py        Cálculo de los casilleros
+  gui/
+    main_window.py        Ventana con las 3 pestañas
+    pestana_descarga.py   Pestaña 1 · Descarga
+    pestana_analisis.py   Pestaña 2 · Análisis
+    pestana_declaracion.py Pestaña 3 · Declaración
+    recursos.py           Utilidades de recursos e imágenes
+  export/                 Reportes Excel (openpyxl) y PDF (reportlab)
+tests/                    Pruebas unitarias (pytest)
 ```
 
-## Reglas de cálculo aplicadas
+## Reglas de cálculo aplicadas (declaración)
 
 - IVA tarifa general 15 % (campo 421 = campo 411 × 15 %).
 - Compras gravadas ≠0 % **con** derecho a crédito → 500/510/520; **sin** derecho → 502/512/522.
 - Compras tarifa 0 % → 507/517; notas de venta (negocios populares) → 508/518.
+- Comprobantes con **tarifas mixtas** (15 % y 0 % en el mismo XML): la base gravada
+  va a 500/510 y la porción 0 % a 507/517.
 - Las notas de crédito restan del valor **neto** (no del bruto).
+- Los comprobantes de **retención** no se consideran compras (se omiten).
 - Factor de proporcionalidad (563) = 1.0000 (ventas 100 % gravadas) → 564 = 520.
-- Duplicados por clave de acceso se ignoran con aviso; si base + IVA ≠ total
-  (posible ICE), se genera una advertencia.
+- Duplicados por clave de acceso se ignoran con aviso.
