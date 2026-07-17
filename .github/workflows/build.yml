@@ -1,17 +1,17 @@
 name: Compilar ejecutables
 
 on:
-  workflow_dispatch:       # botón "Run workflow" en la pestaña Actions
+  workflow_dispatch:       # botón "Run workflow" en la pestaña Actions (respaldo manual)
     inputs:
       forzar:
         description: "Compilar aunque el código no haya cambiado"
         type: boolean
         default: false
   push:
-    tags: ["v*"]           # también al publicar una etiqueta de versión (ej. v1.0.0)
+    branches: [main]       # se compila únicamente al mergear/empujar a main
 
 permissions:
-  contents: write          # necesario para crear Releases
+  contents: write          # necesario para crear/actualizar el Release y mover el tag
 
 jobs:
   cambios:
@@ -26,21 +26,22 @@ jobs:
       - id: detectar
         env:
           FORZAR: ${{ inputs.forzar }}
+          ANTERIOR: ${{ github.event.before }}
         run: |
           if [ "$FORZAR" = "true" ]; then
             echo "Compilación forzada por el usuario."
             echo "construir=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          anterior=$(git tag --sort=-creatordate | grep '^v' | grep -vx "$GITHUB_REF_NAME" | head -1 || true)
-          if [ -z "$anterior" ]; then
-            echo "No hay versión anterior; se compila."
+          # En ejecución manual (workflow_dispatch) no hay commit anterior: se compila.
+          if [ -z "$ANTERIOR" ] || [ "$ANTERIOR" = "0000000000000000000000000000000000000000" ]; then
+            echo "Sin commit anterior de referencia; se compila."
             echo "construir=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          if git diff --quiet "$anterior" HEAD -- app launcher.py assets requirements.txt comprobantes_sri.spec .github/workflows/build.yml; then
-            echo "Sin cambios en el código desde $anterior; se omite la compilación."
+          if git diff --quiet "$ANTERIOR" HEAD -- app launcher.py assets requirements.txt comprobantes_sri.spec .github/workflows/build.yml; then
+            echo "Sin cambios en el código desde $ANTERIOR; se omite la compilación."
             echo "construir=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Cambios detectados desde $anterior; se compila."
+            echo "Cambios detectados desde $ANTERIOR; se compila."
             echo "construir=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -94,18 +95,26 @@ jobs:
           retention-days: 90
 
   release:
-    name: Publicar en Releases
-    if: startsWith(github.ref, 'refs/tags/v')
+    name: Publicar Release "latest"
     needs: compilar
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - name: Mover el tag "latest" al commit actual
+        run: |
+          git tag -f latest
+          git push -f origin latest
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
           path: binarios
       - uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          tag_name: latest
+          name: "Última compilación (main)"
+          body: "Ejecutables generados automáticamente desde el último merge a main. Este Release se actualiza en cada merge."
+          prerelease: true
           files: |
             binarios/ComprobantesSRI-windows.zip
             binarios/ComprobantesSRI-macOS.zip
