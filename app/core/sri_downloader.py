@@ -28,8 +28,10 @@ reCAPTCHA:
 from __future__ import annotations
 
 import os
+import random
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable, List, Optional
@@ -87,6 +89,9 @@ class DownloadConfig:
     tipos_comprobante: Optional[List[str]] = None
     headless: bool = False
     nav_timeout_ms: int = 60_000
+    # Modo semi-manual: el usuario inicia sesión y hace la consulta a mano
+    # (resolviendo el reCAPTCHA), y la app sólo descarga los XML resultantes.
+    semi_manual: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +182,15 @@ class Selectors:
     PASSWORD = "#password"
     BTN_INGRESAR = "#kc-login"
     TXT_INICIAR_SESION = "Iniciar sesión"
+    # Posibles contenedores del mensaje de error de credenciales (Keycloak/SRI).
+    LOGIN_ERROR = (
+        ".kc-feedback-text",
+        ".alert-error",
+        ".pf-c-alert__title",
+        "#input-error",
+        ".ui-messages-error",
+        "span.error",
+    )
 
     # Menú de navegación
     MENU_FACTURACION = "FACTURACIÓN ELECTRÓNICA"
@@ -212,6 +226,32 @@ class PaginacionError(Exception):
 # Número máximo de reintentos para operaciones frágiles (captcha, paginación).
 MAX_REINTENTOS = 5
 
+# Script inyectado antes de cargar cualquier página para ocultar señales de
+# automatización. reCAPTCHA v3 asigna un puntaje según el "aspecto" del
+# navegador; cuantas menos huellas de bot detecte, más alto el puntaje.
+STEALTH_JS = """
+// navigator.webdriver -> undefined (la señal más obvia de automatización)
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+// idioma coherente con un usuario ecuatoriano
+Object.defineProperty(navigator, 'languages', {get: () => ['es-EC', 'es', 'en']});
+// objeto chrome presente (Chromium headless a veces no lo expone completo)
+window.chrome = window.chrome || {};
+window.chrome.runtime = window.chrome.runtime || {};
+// permissions.query no debe delatar el estado de automatización
+try {
+  const _q = window.navigator.permissions.query;
+  window.navigator.permissions.query = (p) => (
+    p && p.name === 'notifications'
+      ? Promise.resolve({state: Notification.permission})
+      : _q(p)
+  );
+} catch (e) {}
+// plugins/mimeTypes no vacíos (un navegador real siempre tiene alguno)
+try {
+  Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+} catch (e) {}
+"""
+
 
 # ---------------------------------------------------------------------------
 # Orquestador de la automatización
@@ -241,10 +281,13 @@ class SRIDownloader:
         config: DownloadConfig,
         log_fn: Optional[LogFn] = None,
         stop_event: Optional[threading.Event] = None,
+        continue_event: Optional[threading.Event] = None,
     ) -> None:
         self.cfg = config
         self.log_fn = log_fn or (lambda msg: None)
         self.stop_event = stop_event or threading.Event()
+        # Señal que la GUI activa (botón "Continuar descarga") en modo semi-manual.
+        self.continue_event = continue_event or threading.Event()
 
     # -- utilidades internas -------------------------------------------------
 
@@ -286,19 +329,42 @@ class SRIDownloader:
         c.click(); c.fill(""); c.press_sequentially(self.cfg.clave, delay=35)
         page.click(Selectors.BTN_INGRESAR)
 
-        try:
-            page.wait_for_url(lambda x: "auth/realms" not in x, timeout=30000)
-        except Exception:
-            pass
-        page.wait_for_timeout(3000)
+        # Esperar el desenlace: o salimos de Keycloak (éxito) o el portal
+        # muestra un error de credenciales. Se corta apenas se detecta el error
+        # (sin esperar el timeout completo) para no seguir con el resto del flujo.
+        exito = False
+        for _ in range(24):  # ~12 s como máximo
+            self._check_stop()
+            if "auth/realms" not in page.url:
+                exito = True
+                break
+            if self._hay_error_login(page):
+                raise LoginError(
+                    "Clave o RUC/cédula incorrectos: el portal rechazó las "
+                    "credenciales. Se cancela el proceso."
+                )
+            page.wait_for_timeout(500)
 
-        if page.locator(Selectors.PASSWORD).count() > 0:
+        page.wait_for_timeout(2000)
+        # Red de seguridad: si seguimos viendo el formulario, el login no pasó.
+        if not exito and page.locator(Selectors.PASSWORD).count() > 0:
             raise LoginError(
                 "No se pudo iniciar sesión. Verifique el RUC/cédula y la clave "
                 "(el portal respondió con un error de credenciales)."
             )
         self._check_stop()
         self.log("Sesión iniciada correctamente.")
+
+    def _hay_error_login(self, page) -> bool:
+        """True si el portal muestra un mensaje de error de credenciales."""
+        for sel in Selectors.LOGIN_ERROR:
+            try:
+                loc = page.locator(sel)
+                if loc.count() and loc.first.is_visible():
+                    return True
+            except Exception:  # noqa: BLE001 - selector no aplicable en esta página
+                continue
+        return False
 
     def _navegar_a_comprobantes(self, page):
         """Navega al módulo de comprobantes recibidos; devuelve la pestaña activa."""
@@ -323,46 +389,167 @@ class SRIDownloader:
         activa.wait_for_load_state("domcontentloaded")
         activa.wait_for_timeout(3500)
         activa.wait_for_selector(Selectors.SELECT_ANIO, timeout=self.cfg.nav_timeout_ms)
+        # Calentamiento: dar un momento de actividad "humana" antes de la primera
+        # consulta ayuda al puntaje de reCAPTCHA v3 (no consultar al instante).
+        self._comportamiento_humano(activa)
+        activa.wait_for_timeout(1500)
         self.log("Módulo de comprobantes abierto.")
         return activa
 
-    def _comportamiento_humano(self, page) -> None:
-        """Movimiento de mouse para mejorar el puntaje de reCAPTCHA v3."""
+    # -- flujo semi-manual (respaldo cuando el reCAPTCHA v3 bloquea) ---------
+
+    def _esperar_continuar(self) -> None:
+        """Bloquea hasta que la GUI active ``continue_event``.
+
+        Lanza ``DownloadStopped`` si el usuario pulsa "Detener" (que en este
+        modo significa "terminar"). El navegador sigue vivo y respondiendo al
+        usuario mientras tanto: corre en un proceso aparte.
+        """
+        while not self.continue_event.is_set():
+            self._check_stop()
+            time.sleep(0.3)
+
+    def _pagina_con_resultados(self, ctx):
+        """Devuelve la pestaña que tenga una tabla de comprobantes con XML.
+
+        Recorre de la más reciente a la más antigua para preferir la pestaña
+        donde el usuario acaba de consultar.
+        """
+        for p in reversed(ctx.pages):
+            try:
+                if p.is_closed():
+                    continue
+                if p.locator(Selectors.XML_LINKS).count() > 0:
+                    return p
+            except Exception:  # noqa: BLE001 - pestaña no inspeccionable
+                continue
+        return None
+
+    def _flujo_semi_manual(self, ctx, page, destino, resultado):
+        """Abre el navegador y deja que el usuario consulte a mano; luego descarga.
+
+        Repite: espera "Continuar descarga" -> descarga la tabla visible ->
+        vuelve a esperar. Termina cuando el usuario pulsa "Detener".
+        """
+        self.log("=" * 60)
+        self.log("MODO SEMI-MANUAL activado.")
+        self.log("1) Inicia sesión en el SRI en la ventana del navegador.")
+        self.log("2) Entra a «Comprobantes electrónicos recibidos», elige año/")
+        self.log("   mes/día y tipo, y pulsa «Consultar» (resuelve el captcha).")
+        self.log("3) Cuando veas la tabla de resultados, vuelve a esta app y")
+        self.log("   pulsa «Continuar descarga».")
+        self.log("Puedes repetir la consulta cuantas veces quieras (otro tipo,")
+        self.log("otro periodo) y pulsar «Continuar descarga» cada vez.")
+        self.log("Cuando termines, pulsa «Detener» para cerrar el navegador.")
+        self.log("=" * 60)
+
         try:
-            for (x, y) in [(400, 300), (700, 450), (500, 400), (620, 560)]:
-                page.mouse.move(x, y)
-                page.wait_for_timeout(200)
-            page.mouse.wheel(0, 200)
-            page.wait_for_timeout(400)
+            page.goto(LANDING_URL, wait_until="domcontentloaded", timeout=self.cfg.nav_timeout_ms)
+        except Exception:  # noqa: BLE001 - el usuario puede navegar por su cuenta
+            pass
+
+        consultas = 0
+        try:
+            while True:
+                self.log("Esperando a que pulses «Continuar descarga»...")
+                self._esperar_continuar()
+                self._check_stop()
+
+                objetivo = self._pagina_con_resultados(ctx)
+                if objetivo is None:
+                    self.log(
+                        "  No encontré una tabla de comprobantes con XML en ninguna "
+                        "pestaña. Realiza la consulta y vuelve a pulsar «Continuar "
+                        "descarga» (o «Detener» para salir)."
+                    )
+                    self.continue_event.clear()
+                    continue
+
+                consultas += 1
+                self.log(f"Descargando los comprobantes de la consulta #{consultas}...")
+                n = self._descargar_todas_paginas(objetivo, destino)
+                resultado.total_descargados += n
+                resultado.paginas_procesadas += 1
+                self.continue_event.clear()
+                self.log(
+                    f"✔ Consulta #{consultas}: {n} archivo(s). Haz otra consulta y "
+                    "pulsa «Continuar descarga», o «Detener» para terminar."
+                )
+        except DownloadStopped:
+            self.log("Descarga semi-manual finalizada.")
+
+        if resultado.total_descargados:
+            self.log(
+                f"✔ Total: {resultado.total_descargados} archivo(s) en «{destino}»."
+            )
+        else:
+            self.log("No se descargó ningún archivo.")
+        return resultado
+
+    def _comportamiento_humano(self, page) -> None:
+        """Movimiento de mouse "humano" para mejorar el puntaje de reCAPTCHA v3.
+
+        reCAPTCHA v3 puntúa el comportamiento: trayectorias variadas, pausas
+        irregulares y algo de scroll parecen humanas; los saltos idénticos en
+        cada corrida, no. Por eso se aleatorizan posiciones y tiempos.
+        """
+        try:
+            x, y = 300, 300
+            for _ in range(random.randint(5, 9)):
+                x += random.randint(-180, 220)
+                y += random.randint(-120, 160)
+                # Mantener el cursor dentro de un área razonable de la ventana.
+                x = max(60, min(x, 1100))
+                y = max(60, min(y, 700))
+                page.mouse.move(x, y, steps=random.randint(6, 14))
+                page.wait_for_timeout(random.randint(120, 360))
+            page.mouse.wheel(0, random.randint(150, 400))
+            page.wait_for_timeout(random.randint(300, 700))
         except Exception:
             pass
 
-    def _consultar(self, page, tipo_codigo: str) -> bool:
-        """Aplica filtros y pulsa Consultar, reintentando ante el reCAPTCHA.
-
-        Devuelve True si la consulta se ejecutó (aunque no haya resultados),
-        False si el reCAPTCHA siguió fallando tras los reintentos.
-        """
+    def _seleccionar_filtros(self, page, tipo_codigo: str) -> None:
         page.select_option(Selectors.SELECT_ANIO, value=str(self.cfg.anio))
         page.select_option(Selectors.SELECT_MES, value=str(self.cfg.mes))
         page.select_option(Selectors.SELECT_DIA, value=str(self.cfg.dia))
         page.select_option(Selectors.SELECT_TIPO, value=tipo_codigo)
 
+    def _consultar(self, page, tipo_codigo: str) -> bool:
+        """Aplica filtros y pulsa Consultar, renovando el token ante el reCAPTCHA.
+
+        Devuelve True si la consulta se ejecutó (aunque no haya resultados),
+        False si el reCAPTCHA siguió fallando tras los reintentos.
+
+        Estrategia frente a reCAPTCHA v3: NO se martilla el botón. Cada reintento
+        RECARGA la página para obtener un token nuevo (el v3 caduca a los ~2 min
+        y repetir clics con el mismo contexto sólo baja el puntaje), simula
+        comportamiento humano y espera de forma escalonada.
+        """
         for intento in range(1, MAX_REINTENTOS + 1):
             self._check_stop()
+            if intento > 1:
+                self.log(
+                    f"  Renovando el reCAPTCHA con una recarga "
+                    f"(intento {intento}/{MAX_REINTENTOS})..."
+                )
+                page.reload(wait_until="domcontentloaded")
+                page.wait_for_selector(Selectors.SELECT_ANIO, timeout=self.cfg.nav_timeout_ms)
+                # Espera escalonada: cada reintento deja "reposar" un poco más la
+                # sesión antes de volver a pedir un token.
+                page.wait_for_timeout(2000 + intento * 1500)
+
+            self._seleccionar_filtros(page, tipo_codigo)
             self._comportamiento_humano(page)
             page.locator(Selectors.BTN_CONSULTAR).hover()
-            page.wait_for_timeout(400)
+            page.wait_for_timeout(random.randint(500, 900))
             page.click(Selectors.BTN_CONSULTAR)
             page.wait_for_timeout(6000)
 
             if page.locator(Selectors.CAPTCHA_ERROR).count() == 0:
                 return True
             self.log(
-                f"  reCAPTCHA rechazó la consulta (intento {intento}/{MAX_REINTENTOS}), "
-                "reintentando..."
+                f"  reCAPTCHA rechazó la consulta (intento {intento}/{MAX_REINTENTOS})."
             )
-            page.wait_for_timeout(3000)
         return False
 
     def _descargar_pagina_actual(self, page, destino: str) -> int:
@@ -510,11 +697,12 @@ class SRIDownloader:
         with sync_playwright() as p:
             ctx = self._lanzar_contexto(p)
             ctx.set_default_timeout(self.cfg.nav_timeout_ms)
-            ctx.add_init_script(
-                "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
-            )
+            ctx.add_init_script(STEALTH_JS)
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             try:
+                if self.cfg.semi_manual:
+                    return self._flujo_semi_manual(ctx, page, destino, resultado)
+
                 self._login(page)
                 comprobantes = self._navegar_a_comprobantes(page)
 
