@@ -84,7 +84,35 @@ def ejecutar_cli(argumentos: list[str]) -> int:
     return 0
 
 
+def _selftest() -> int:
+    """Verifica que Playwright + Chrome funcionan (útil en el ejecutable empaquetado)."""
+    import os
+    import tempfile
+
+    log_path = os.path.join(tempfile.gettempdir(), "sri_selftest.log")
+    with open(log_path, "w", encoding="utf-8") as f:
+        try:
+            from playwright.sync_api import sync_playwright
+
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    channel="chrome",
+                    headless=True,
+                    ignore_default_args=["--enable-automation"],
+                )
+                page = browser.new_page()
+                page.goto("about:blank")
+                browser.close()
+            f.write("OK: Playwright pudo lanzar Chrome.\n")
+            return 0
+        except Exception as e:  # noqa: BLE001
+            f.write(f"FAIL: {e!r}\n")
+            return 1
+
+
 def main() -> int:
+    if "--selftest" in sys.argv:
+        return _selftest()
     if len(sys.argv) > 1:
         return ejecutar_cli(sys.argv[1:])
     from .gui.main_window import ejecutar_gui

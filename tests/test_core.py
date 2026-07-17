@@ -1,8 +1,9 @@
 """Pruebas del núcleo de cálculo.
 
-Las pruebas que dependen del archivo real de junio 2026 se omiten si el archivo
-no está presente (p. ej. en CI: el archivo contiene datos personales y no se
-versiona). Las pruebas con datos sintéticos corren siempre.
+Usan un archivo de muestra 100 % sintético (`tests/datos/recibidos_sintetico.txt`)
+que replica las particularidades del formato real del SRI: codificación cp1252
+(con Ñ), decimales sin cero inicial (`.47`), receptores a cédula y a RUC,
+un comprobante duplicado y uno cuyo total no cuadra (simula ICE).
 """
 from __future__ import annotations
 
@@ -14,19 +15,15 @@ from pathlib import Path
 from app.core import calculadora, clasificador, parser
 from app.core.models import Comprobante
 
-ARCHIVO_EJEMPLO = Path(__file__).resolve().parent.parent / "0603545351001_Recibidos.txt"
-RUC = "0603545351001"
+ARCHIVO_MUESTRA = Path(__file__).resolve().parent / "datos" / "recibidos_sintetico.txt"
+RUC = "9999999999001"
+CEDULA = "9999999999"
 PERIODO = "2026-06"
-
-requiere_archivo = unittest.skipUnless(
-    ARCHIVO_EJEMPLO.exists(),
-    "archivo real de recibidos no disponible (no se versiona por contener datos personales)",
-)
 
 
 def _comprobante(**cambios) -> Comprobante:
     base = dict(
-        ruc_emisor="9999999999001",
+        ruc_emisor="9990000009001",
         razon_social_emisor="PRUEBA S.A.",
         tipo_comprobante="Factura",
         serie_comprobante="001-001-000000001",
@@ -49,62 +46,69 @@ class TestParser(unittest.TestCase):
         self.assertEqual(parser.parsear_decimal("3,75"), Decimal("3.75"))
 
     def test_ruc_desde_nombre(self):
-        self.assertEqual(parser.ruc_desde_nombre_archivo("0603545351001_Recibidos.txt"), RUC)
+        self.assertEqual(parser.ruc_desde_nombre_archivo("9999999999001_Recibidos.txt"), RUC)
         self.assertIsNone(parser.ruc_desde_nombre_archivo("otro_archivo.txt"))
 
-    @requiere_archivo
-    def test_lee_archivo_real(self):
-        resultado = parser.leer_archivo(ARCHIVO_EJEMPLO)
-        self.assertEqual(len(resultado.comprobantes), 45)
+    def test_lee_archivo_muestra(self):
+        resultado = parser.leer_archivo(ARCHIVO_MUESTRA)
+        # 6 filas de datos: 1 duplicada se descarta → 5 comprobantes
+        self.assertEqual(len(resultado.comprobantes), 5)
         self.assertEqual(resultado.periodos, [PERIODO])
-        # La Ñ de "COMPAÑIA" confirma que la codificación cp1252 se decodificó bien.
-        seguros = [c for c in resultado.comprobantes if c.ruc_emisor == "1791289927001"]
-        self.assertIn("COMPAÑIA", seguros[0].razon_social_emisor)
+        # La Ñ confirma que la codificación cp1252 se decodificó bien.
+        emisores = [c.razon_social_emisor for c in resultado.comprobantes]
+        self.assertIn("COMPAÑIA DE PRUEBAS ÑUFLO S.A.", emisores)
+
+    def test_advertencias_duplicado_y_descuadre(self):
+        resultado = parser.leer_archivo(ARCHIVO_MUESTRA)
+        self.assertEqual(len(resultado.advertencias), 2)
+        self.assertTrue(any("duplicado" in a for a in resultado.advertencias))
+        self.assertTrue(any("no cuadra" in a for a in resultado.advertencias))
 
 
-@requiere_archivo
-class TestComprasArchivoReal(unittest.TestCase):
+class TestComprasArchivoMuestra(unittest.TestCase):
     def setUp(self):
-        self.resultado = parser.leer_archivo(ARCHIVO_EJEMPLO)
-
-    def test_todas_con_credito(self):
-        clasificador.marcar_todas_con_credito(self.resultado.comprobantes)
-        compras = calculadora.calcular_compras(self.resultado.comprobantes, PERIODO)
-        self.assertEqual(compras.c500, Decimal("1642.99"))
-        self.assertEqual(compras.c520, Decimal("245.51"))
-        self.assertEqual(compras.c507, Decimal("149.73"))
-        self.assertEqual(compras.c502, Decimal("0"))
-        self.assertEqual(compras.c509, Decimal("1792.72"))
-        self.assertEqual(compras.c529, Decimal("245.51"))
-        self.assertEqual(compras.c564, Decimal("245.51"))
-        self.assertEqual(compras.c565, Decimal("0.00"))
-        self.assertEqual(compras.c115, 45)
+        self.resultado = parser.leer_archivo(ARCHIVO_MUESTRA)
 
     def test_clasificacion_sugerida_solo_ruc(self):
         clasificador.sugerir_clasificacion(self.resultado.comprobantes, RUC)
         compras = calculadora.calcular_compras(self.resultado.comprobantes, PERIODO)
-        self.assertEqual(compras.c500, Decimal("1063"))
-        self.assertEqual(compras.c520, Decimal("159.45"))
-        self.assertEqual(compras.c502, Decimal("579.99"))
-        self.assertEqual(compras.c522, Decimal("86.06"))
-        self.assertEqual(compras.c529, Decimal("245.51"))
-        self.assertEqual(compras.c564, Decimal("159.45"))
+        self.assertEqual(compras.c500, Decimal("103.13"))   # facturas al RUC: 100 + 3.13
+        self.assertEqual(compras.c520, Decimal("15.47"))
+        self.assertEqual(compras.c502, Decimal("35"))       # facturas a la cédula: 25 + 10
+        self.assertEqual(compras.c522, Decimal("5.25"))
+        self.assertEqual(compras.c507, Decimal("10"))
+        self.assertEqual(compras.c509, Decimal("148.13"))
+        self.assertEqual(compras.c529, Decimal("20.72"))
+        self.assertEqual(compras.c564, Decimal("15.47"))
+        self.assertEqual(compras.c115, 5)
+
+    def test_todas_con_credito(self):
+        clasificador.marcar_todas_con_credito(self.resultado.comprobantes)
+        compras = calculadora.calcular_compras(self.resultado.comprobantes, PERIODO)
+        self.assertEqual(compras.c500, Decimal("138.13"))
+        self.assertEqual(compras.c520, Decimal("20.72"))
+        self.assertEqual(compras.c502, Decimal("0"))
+        self.assertEqual(compras.c564, Decimal("20.72"))
+        self.assertEqual(compras.c565, Decimal("0.00"))
 
     def test_resumen_impuesto_a_pagar(self):
-        clasificador.marcar_todas_con_credito(self.resultado.comprobantes)
+        clasificador.sugerir_clasificacion(self.resultado.comprobantes, RUC)
         declaracion = calculadora.calcular_declaracion(
-            self.resultado.comprobantes, PERIODO, ventas_brutas=Decimal("5586.96")
+            self.resultado.comprobantes, PERIODO, ventas_brutas=Decimal("200"),
+            advertencias=self.resultado.advertencias,
         )
-        self.assertEqual(declaracion.resumen.impuesto_a_pagar, Decimal("592.53"))
+        self.assertEqual(declaracion.ventas.c421, Decimal("30.00"))  # 200 × 15 %
+        self.assertEqual(declaracion.resumen.impuesto_a_pagar, Decimal("14.53"))
         self.assertEqual(declaracion.resumen.credito_a_favor, Decimal("0"))
+        self.assertEqual(len(declaracion.advertencias), 2)
 
     def test_resumen_credito_a_favor(self):
-        clasificador.marcar_todas_con_credito(self.resultado.comprobantes)
+        clasificador.sugerir_clasificacion(self.resultado.comprobantes, RUC)
         declaracion = calculadora.calcular_declaracion(
-            self.resultado.comprobantes, PERIODO, ventas_brutas=Decimal("100")
+            self.resultado.comprobantes, PERIODO, ventas_brutas=Decimal("10")
         )
         self.assertEqual(declaracion.resumen.impuesto_a_pagar, Decimal("0"))
-        self.assertEqual(declaracion.resumen.credito_a_favor, Decimal("230.51"))
+        self.assertEqual(declaracion.resumen.credito_a_favor, Decimal("13.97"))
 
 
 class TestComprasSinteticas(unittest.TestCase):
@@ -150,19 +154,19 @@ class TestComprasSinteticas(unittest.TestCase):
 
     def test_clasificacion_sugerida_por_receptor(self):
         al_ruc = _comprobante()
-        a_cedula = _comprobante(clave_acceso="W" * 49, identificacion_receptor="0603545351")
+        a_cedula = _comprobante(clave_acceso="W" * 49, identificacion_receptor=CEDULA)
         clasificador.sugerir_clasificacion([al_ruc, a_cedula], RUC)
         self.assertTrue(al_ruc.con_credito)
         self.assertFalse(a_cedula.con_credito)
 
 
 class TestVentas(unittest.TestCase):
-    def test_ventas_ejemplo_formulario(self):
-        ventas = calculadora.calcular_ventas(Decimal("5586.96"))
-        self.assertEqual(ventas.c401, Decimal("5586.96"))
-        self.assertEqual(ventas.c411, Decimal("5586.96"))
-        self.assertEqual(ventas.c421, Decimal("838.04"))  # 5586.96 × 15 %
-        self.assertEqual(ventas.c499, Decimal("838.04"))
+    def test_ventas_formulario(self):
+        ventas = calculadora.calcular_ventas(Decimal("1000"))
+        self.assertEqual(ventas.c401, Decimal("1000"))
+        self.assertEqual(ventas.c411, Decimal("1000"))
+        self.assertEqual(ventas.c421, Decimal("150.00"))  # 1000 × 15 %
+        self.assertEqual(ventas.c499, Decimal("150.00"))
 
     def test_ventas_con_notas_de_credito(self):
         ventas = calculadora.calcular_ventas(Decimal("1000"), notas_credito_emitidas=Decimal("100"))

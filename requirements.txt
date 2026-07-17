@@ -1,2 +1,9 @@
-openpyxl>=3.1
-reportlab>=4.0
+# Descarga automatizada de comprobantes (pestaña Descarga)
+playwright==1.60.0
+
+# Exportación de reportes
+openpyxl>=3.1      # Excel (.xlsx) en Análisis y Declaración
+reportlab>=4.0     # PDF de la declaración
+
+# Pruebas
+pytest>=8.2

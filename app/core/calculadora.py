@@ -31,6 +31,9 @@ def calcular_compras(
         categoria = categoria_de(comprobante)
         base = comprobante.valor_sin_impuestos
         iva = comprobante.iva
+        # Parte con tarifa 0 % del mismo comprobante (solo la aportan los XML con
+        # tarifas mixtas; en el TXT queda en 0). Va siempre a 507/517.
+        base_cero = comprobante.base_tarifa_cero
 
         if comprobante.es_nota_credito:
             # Las notas de crédito no suman al bruto: restan del valor neto.
@@ -44,6 +47,8 @@ def calcular_compras(
                 casilleros.c518 -= base
             else:
                 casilleros.c517 -= base
+            if base_cero:
+                casilleros.c517 -= base_cero
             continue
 
         if categoria is Categoria.GRAVADA_CON_CREDITO:
@@ -60,6 +65,14 @@ def calcular_compras(
         else:
             casilleros.c507 += base
             casilleros.c517 += base
+
+        # La porción 0 % del comprobante va a 507/517. En el TXT base_cero es 0
+        # (la base 0 % ya se sumó como valor_sin_impuestos en el ramo else); en
+        # los XML la base gravada y la 0 % vienen separadas, así que no hay doble
+        # conteo.
+        if base_cero:
+            casilleros.c507 += base_cero
+            casilleros.c517 += base_cero
 
         if comprobante.es_nota_venta:
             casilleros.c117 += 1

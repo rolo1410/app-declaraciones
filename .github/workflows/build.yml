@@ -10,6 +10,9 @@ on:
   push:
     tags: ["v*"]           # también al publicar una etiqueta de versión (ej. v1.0.0)
 
+permissions:
+  contents: write          # necesario para crear Releases
+
 jobs:
   cambios:
     name: ¿Cambió el código?
@@ -33,7 +36,7 @@ jobs:
             echo "No hay versión anterior; se compila."
             echo "construir=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          if git diff --quiet "$anterior" HEAD -- app requirements.txt .github/workflows/build.yml; then
+          if git diff --quiet "$anterior" HEAD -- app launcher.py assets requirements.txt comprobantes_sri.spec .github/workflows/build.yml; then
             echo "Sin cambios en el código desde $anterior; se omite la compilación."
             echo "construir=false" >> "$GITHUB_OUTPUT"
           else
@@ -52,48 +55,49 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: python -m unittest discover -s tests -v
+      - run: python -m pytest tests/ -q
 
-  windows:
-    name: Ejecutable Windows (.exe)
+  compilar:
+    name: Ejecutable (${{ matrix.nombre }})
     needs: pruebas
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            nombre: windows
+          - os: macos-latest
+            nombre: macOS
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r requirements.txt pyinstaller
-      - run: pyinstaller --windowed --onefile --name DeclaracionIVA app/main.py
-      - uses: actions/upload-artifact@v4
-        with:
-          name: DeclaracionIVA-Windows
-          path: dist/DeclaracionIVA.exe
+      - run: pip install -r requirements.txt pyinstaller==6.11.1
+      - run: pyinstaller comprobantes_sri.spec --noconfirm --clean
 
-  macos:
-    name: Aplicación macOS (.app)
-    needs: pruebas
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt pyinstaller
-      - run: pyinstaller --windowed --name DeclaracionIVA app/main.py
-      - run: ditto -c -k --keepParent dist/DeclaracionIVA.app dist/DeclaracionIVA-macOS.zip
+      - name: Empaquetar (Windows)
+        if: matrix.nombre == 'windows'
+        shell: pwsh
+        run: Compress-Archive -Path "dist/ComprobantesSRI/*" -DestinationPath "dist/ComprobantesSRI-windows.zip" -Force
+
+      - name: Empaquetar (macOS)
+        if: matrix.nombre == 'macOS'
+        run: ditto -c -k --keepParent dist/ComprobantesSRI.app dist/ComprobantesSRI-macOS.zip
+
       - uses: actions/upload-artifact@v4
         with:
-          name: DeclaracionIVA-macOS
-          path: dist/DeclaracionIVA-macOS.zip
+          name: ComprobantesSRI-${{ matrix.nombre }}
+          path: dist/ComprobantesSRI-${{ matrix.nombre }}.zip
+          if-no-files-found: error
+          retention-days: 90
 
   release:
     name: Publicar en Releases
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, macos]
+    needs: compilar
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -101,6 +105,7 @@ jobs:
           path: binarios
       - uses: softprops/action-gh-release@v2
         with:
+          generate_release_notes: true
           files: |
-            binarios/DeclaracionIVA.exe
-            binarios/DeclaracionIVA-macOS.zip
+            binarios/ComprobantesSRI-windows.zip
+            binarios/ComprobantesSRI-macOS.zip
