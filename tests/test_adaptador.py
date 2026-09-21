@@ -33,7 +33,7 @@ def _cero(base: float) -> az.ImpuestoResumen:
 def test_factura_gravada_mapea_base_e_iva():
     xml = _comp_xml(cod_doc="01", tipo_nombre="Factura", clave_acceso="A1",
                     fecha_emision=date(2026, 6, 10), ruc_emisor="0999999999001",
-                    identificacion_receptor="0603545351001", importe_total=115.0,
+                    identificacion_receptor="9999999999001", importe_total=115.0,
                     impuestos=[_iva(100.0, 15.0)])
     m = adaptador.adaptar_comprobante(xml)
     assert m is not None
@@ -74,11 +74,11 @@ def test_retencion_se_ignora():
 def test_calculo_completo_gravada_menos_nota_credito():
     factura = _comp_xml(cod_doc="01", tipo_nombre="Factura", clave_acceso="F1",
                         fecha_emision=date(2026, 6, 5),
-                        identificacion_receptor="0603545351001",
+                        identificacion_receptor="9999999999001",
                         importe_total=115.0, impuestos=[_iva(100.0, 15.0)])
     nc = _comp_xml(cod_doc="04", tipo_nombre="Nota de Crédito", clave_acceso="N1",
                    fecha_emision=date(2026, 6, 20), signo=-1,
-                   identificacion_receptor="0603545351001",
+                   identificacion_receptor="9999999999001",
                    importe_total=23.0, impuestos=[_iva(20.0, 3.0)])
     res = adaptador.adaptar_comprobantes([factura, nc])
     assert len(res.comprobantes) == 2

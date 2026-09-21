@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import queue
+import sys
 import threading
 from datetime import datetime
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from ..core import preferencias
 from ..core.sri_downloader import (
     MESES,
+    periodo_anterior,
     TIPO_RECIBIDOS,
     TIPOS_COMPROBANTE,
     DownloadConfig,
@@ -36,17 +39,19 @@ class PestanaDescarga(ttk.Frame):
 
     def _build_ui(self) -> None:
         pad = {"padx": 8, "pady": 4}
+        # Valores por defecto guardados fuera del repo (ver app/core/preferencias.py).
+        prefs = preferencias.cargar()
 
         # --- Credenciales ---
         frm_cred = ttk.LabelFrame(self, text="Credenciales SRI", padding=10)
         frm_cred.pack(fill="x", **pad)
 
         ttk.Label(frm_cred, text="RUC / C.I. / Pasaporte:").grid(row=0, column=0, sticky="w", pady=4)
-        self.var_ruc = tk.StringVar()
+        self.var_ruc = tk.StringVar(value=prefs.get("ruc", ""))
         ttk.Entry(frm_cred, textvariable=self.var_ruc, width=30).grid(row=0, column=1, sticky="w", padx=8)
 
         ttk.Label(frm_cred, text="Clave:").grid(row=1, column=0, sticky="w", pady=4)
-        self.var_clave = tk.StringVar()
+        self.var_clave = tk.StringVar(value=prefs.get("clave", ""))
         self.entry_clave = ttk.Entry(frm_cred, textvariable=self.var_clave, width=30, show="•")
         self.entry_clave.grid(row=1, column=1, sticky="w", padx=8)
         self.var_ver_clave = tk.BooleanVar(value=False)
@@ -60,15 +65,17 @@ class PestanaDescarga(ttk.Frame):
         frm_per.pack(fill="x", **pad)
 
         anio_actual = datetime.now().year
+        # Por defecto, el mes anterior: es el periodo que se declara.
+        anio_previo, mes_previo = periodo_anterior()
         ttk.Label(frm_per, text="Año:").grid(row=0, column=0, sticky="w", pady=4)
-        self.var_anio = tk.StringVar(value=str(anio_actual))
+        self.var_anio = tk.StringVar(value=str(anio_previo))
         ttk.Combobox(
             frm_per, textvariable=self.var_anio, width=8, state="readonly",
             values=[str(a) for a in range(anio_actual, 1999, -1)],
         ).grid(row=0, column=1, sticky="w", padx=8)
 
         ttk.Label(frm_per, text="Mes:").grid(row=0, column=2, sticky="w", pady=4)
-        self.var_mes = tk.StringVar(value=MESES[datetime.now().month - 1][0])
+        self.var_mes = tk.StringVar(value=MESES[mes_previo - 1][0])
         ttk.Combobox(
             frm_per, textvariable=self.var_mes, width=16, state="readonly",
             values=[etiqueta for etiqueta, _ in MESES],
@@ -95,7 +102,7 @@ class PestanaDescarga(ttk.Frame):
         # --- Directorio ---
         frm_dir = ttk.LabelFrame(self, text="Directorio de descarga", padding=10)
         frm_dir.pack(fill="x", **pad)
-        self.var_dir = tk.StringVar()
+        self.var_dir = tk.StringVar(value=prefs.get("download_dir", ""))
         ttk.Entry(frm_dir, textvariable=self.var_dir).pack(side="left", fill="x", expand=True)
         ttk.Button(frm_dir, text="Seleccionar...", command=self._elegir_directorio).pack(side="left", padx=8)
 
@@ -119,6 +126,16 @@ class PestanaDescarga(ttk.Frame):
             "y consultas a mano; la app solo descarga los XML)",
             variable=self.var_semi_manual,
             command=self._toggle_semi_manual,
+        ).pack(side="left")
+
+        frm_opt3 = ttk.Frame(self)
+        frm_opt3.pack(fill="x", **pad)
+        self.var_chromium = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            frm_opt3,
+            text="Usar Chromium en vez de Chrome (pruébelo si Chrome se cierra "
+            "solo a mitad de la descarga)",
+            variable=self.var_chromium,
         ).pack(side="left")
 
         # --- Botones ---
@@ -191,6 +208,7 @@ class PestanaDescarga(ttk.Frame):
             tipos_comprobante=tipos or None,
             headless=self.var_headless.get() and not self.var_semi_manual.get(),
             semi_manual=self.var_semi_manual.get(),
+            usar_chromium=self.var_chromium.get(),
         )
 
     def _iniciar(self) -> None:
@@ -247,6 +265,21 @@ class PestanaDescarga(ttk.Frame):
             # fallo de login o una descarga sin resultados).
             if resultado.total_descargados > 0:
                 carpeta_final = getattr(resultado, "carpeta_destino", "") or cfg.download_dir
+        except ModuleNotFoundError as e:
+            if e.name == "playwright":
+                log_fn(
+                    "✖ Playwright no está instalado en el intérprete que ejecuta la app "
+                    f"({sys.executable})."
+                )
+                log_fn(
+                    "  Ejecute la app con el entorno del proyecto: .venv/bin/python -m app.main"
+                )
+                log_fn(
+                    "  Si el entorno es nuevo: pip install -r requirements.txt "
+                    "&& python -m playwright install chromium"
+                )
+            else:
+                log_fn(f"✖ Error inesperado: {e}")
         except Exception as e:  # noqa: BLE001
             log_fn(f"✖ Error inesperado: {e}")
         finally:

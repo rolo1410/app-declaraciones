@@ -58,7 +58,8 @@ exe = EXE(
     upx=False,
     console=False,          # app de ventana (sin consola)
     disable_windowed_traceback=False,
-    argv_emulation=True,    # permite abrir por doble clic en macOS
+    # argv_emulation solo aplica en macOS; en Linux/Windows PyInstaller avisa.
+    argv_emulation=(sys.platform == "darwin"),
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,

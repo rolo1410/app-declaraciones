@@ -59,6 +59,8 @@ jobs:
       - run: python -m pytest tests/ -q
 
   compilar:
+    # Solo Linux y Windows: son las plataformas que se pueden distribuir sin
+    # certificado de firma/notarización de Apple.
     name: Ejecutable (${{ matrix.nombre }})
     needs: pruebas
     runs-on: ${{ matrix.os }}
@@ -68,29 +70,50 @@ jobs:
         include:
           - os: windows-latest
             nombre: windows
-          - os: macos-latest
-            nombre: macOS
+          - os: ubuntu-22.04        # glibc antigua = el binario corre también en distros nuevas
+            nombre: linux
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      # Tkinter necesita las librerías Tcl/Tk del sistema para que PyInstaller
+      # las recolecte; el runner de Ubuntu no las trae por defecto.
+      - name: Dependencias del sistema (Linux)
+        if: matrix.nombre == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk tk-dev
+
       - run: pip install -r requirements.txt pyinstaller==6.11.1
       - run: pyinstaller comprobantes_sri.spec --noconfirm --clean
+
+      # Comprobación de humo: el binario debe arrancar y responder --selftest.
+      # No falla el job (el runner no tiene Chrome), solo deja rastro en el log.
+      - name: Verificar que el binario arranca (Linux)
+        if: matrix.nombre == 'linux'
+        continue-on-error: true
+        run: |
+          ./dist/ComprobantesSRI/ComprobantesSRI --selftest || true
+          cat "${TMPDIR:-/tmp}/sri_selftest.log" 2>/dev/null || true
 
       - name: Empaquetar (Windows)
         if: matrix.nombre == 'windows'
         shell: pwsh
         run: Compress-Archive -Path "dist/ComprobantesSRI/*" -DestinationPath "dist/ComprobantesSRI-windows.zip" -Force
 
-      - name: Empaquetar (macOS)
-        if: matrix.nombre == 'macOS'
-        run: ditto -c -k --keepParent dist/ComprobantesSRI.app dist/ComprobantesSRI-macOS.zip
+      # En Linux se usa tar.gz: zip no conserva el bit de ejecución del binario.
+      - name: Empaquetar (Linux)
+        if: matrix.nombre == 'linux'
+        run: tar -czf dist/ComprobantesSRI-linux.tar.gz -C dist ComprobantesSRI
 
       - uses: actions/upload-artifact@v4
         with:
           name: ComprobantesSRI-${{ matrix.nombre }}
-          path: dist/ComprobantesSRI-${{ matrix.nombre }}.zip
+          path: |
+            dist/ComprobantesSRI-windows.zip
+            dist/ComprobantesSRI-linux.tar.gz
           if-no-files-found: error
           retention-days: 90
 
@@ -113,8 +136,15 @@ jobs:
         with:
           tag_name: latest
           name: "Última compilación (main)"
-          body: "Ejecutables generados automáticamente desde el último merge a main. Este Release se actualiza en cada merge."
+          body: |
+            Ejecutables generados automáticamente desde el último merge a main.
+            Este Release se actualiza en cada merge.
+
+            - `ComprobantesSRI-windows.zip` — descomprima la carpeta completa y ejecute `ComprobantesSRI.exe`.
+            - `ComprobantesSRI-linux.tar.gz` — `tar -xzf` y ejecute `ComprobantesSRI/ComprobantesSRI`.
+
+            Requisito en la máquina destino: tener Google Chrome instalado (pestaña Descarga).
           prerelease: true
           files: |
             binarios/ComprobantesSRI-windows.zip
-            binarios/ComprobantesSRI-macOS.zip
+            binarios/ComprobantesSRI-linux.tar.gz
