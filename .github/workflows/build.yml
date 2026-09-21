@@ -98,10 +98,12 @@ jobs:
           ./dist/ComprobantesSRI/ComprobantesSRI --selftest || true
           cat "${TMPDIR:-/tmp}/sri_selftest.log" 2>/dev/null || true
 
+      # Se comprime la CARPETA, no su contenido: con "dist/ComprobantesSRI/*"
+      # el zip queda plano y al extraerlo vuelca ~1200 archivos sueltos.
       - name: Empaquetar (Windows)
         if: matrix.nombre == 'windows'
         shell: pwsh
-        run: Compress-Archive -Path "dist/ComprobantesSRI/*" -DestinationPath "dist/ComprobantesSRI-windows.zip" -Force
+        run: Compress-Archive -Path "dist/ComprobantesSRI" -DestinationPath "dist/ComprobantesSRI-windows.zip" -Force
 
       # En Linux se usa tar.gz: zip no conserva el bit de ejecución del binario.
       - name: Empaquetar (Linux)
