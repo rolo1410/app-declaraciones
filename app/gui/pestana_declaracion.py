@@ -420,6 +420,12 @@ class PestanaDeclaracion(ttk.Frame):
         for numero, ruc in enumerate(orden_grupos):
             miembros = grupos[ruc]
             banda = numero % len(self._BANDAS_CLARO)
+            if len(miembros) == 1:
+                # Una sola factura: no hace falta expandir, va directa con el
+                # color de cabecera para distinguirla de sus vecinas.
+                indice, c = miembros[0]
+                self._insertar_factura("", indice, c, f"cab{banda}")
+                continue
             primero = miembros[0][1]
             gravadas = [c for _, c in miembros if c.iva > 0]
             con_credito = sum(1 for c in gravadas if c.con_credito)
@@ -525,7 +531,7 @@ class PestanaDeclaracion(ttk.Frame):
         self.refrescar_tabla()
 
     def marcar_emisor(self, con_credito: bool) -> None:
-        """Marca todas las facturas del emisor seleccionado (fila de grupo o factura)."""
+        """Marca todas las facturas del emisor seleccionado (fila de emisor o factura)."""
         seleccion = self.tabla.selection()
         if not seleccion:
             messagebox.showinfo(TITULO, "Seleccione un emisor o una de sus facturas.")
