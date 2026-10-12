@@ -15,6 +15,17 @@ def redondear(valor: Decimal) -> Decimal:
 
 
 @dataclass
+class LineaDetalle:
+    """Una línea (producto/servicio) de la factura; solo disponible desde XML."""
+
+    descripcion: str
+    cantidad: Decimal
+    precio_unitario: Decimal
+    precio_total: Decimal  # sin impuestos
+    tarifa_iva: Decimal  # porcentaje: 0, 15...
+
+
+@dataclass
 class Comprobante:
     """Una fila del archivo de comprobantes recibidos del SRI."""
 
@@ -36,6 +47,9 @@ class Comprobante:
     # parte 0 % dentro de un mismo comprobante (tarifas mixtas).
     base_tarifa_cero: Decimal = Decimal("0")
     advertencias: list[str] = field(default_factory=list)
+    # Solo los XML traen el nombre del receptor y las líneas de la factura.
+    razon_social_receptor: str = ""
+    detalles: list[LineaDetalle] = field(default_factory=list)
 
     @property
     def periodo(self) -> str:
@@ -88,6 +102,10 @@ class CasillerosVentas:
     c401: Decimal = Decimal("0")  # Ventas gravadas ≠0% — bruto
     c411: Decimal = Decimal("0")  # Ventas gravadas ≠0% — neto (bruto - N/C)
     c421: Decimal = Decimal("0")  # Impuesto generado
+    c403: Decimal = Decimal("0")  # Ventas 0% sin derecho a crédito — bruto
+    c413: Decimal = Decimal("0")  # Ventas 0% sin derecho a crédito — neto
+    c405: Decimal = Decimal("0")  # Ventas 0% con derecho a crédito — bruto
+    c415: Decimal = Decimal("0")  # Ventas 0% con derecho a crédito — neto
     c409: Decimal = Decimal("0")  # Total ventas — bruto
     c419: Decimal = Decimal("0")  # Total ventas — neto
     c429: Decimal = Decimal("0")  # Total impuesto generado

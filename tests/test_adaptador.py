@@ -43,6 +43,22 @@ def test_factura_gravada_mapea_base_e_iva():
     assert m.periodo == "2026-06"
 
 
+def test_lineas_de_detalle_y_receptor_se_conservan():
+    linea = az.LineaDetalle(descripcion="Arroz 1kg", cantidad=2.5, precio_unitario=1.123456,
+                            descuento=0.0, precio_total_sin_impuesto=2.81, tarifa_iva=0.0)
+    xml = _comp_xml(cod_doc="01", tipo_nombre="Factura", clave_acceso="A9",
+                    fecha_emision=date(2026, 6, 10), importe_total=2.81,
+                    razon_social_receptor="CLIENTE PRUEBA", detalles=[linea],
+                    impuestos=[_cero(2.81)])
+    m = adaptador.adaptar_comprobante(xml)
+    assert m.razon_social_receptor == "CLIENTE PRUEBA"
+    assert len(m.detalles) == 1
+    assert m.detalles[0].descripcion == "Arroz 1kg"
+    assert m.detalles[0].cantidad == Decimal("2.5")
+    assert m.detalles[0].precio_unitario == Decimal("1.123456")
+    assert m.detalles[0].precio_total == Decimal("2.81")
+
+
 def test_tarifas_mixtas_separan_gravada_y_cero():
     xml = _comp_xml(cod_doc="01", tipo_nombre="Factura", clave_acceso="A2",
                     fecha_emision=date(2026, 6, 10), importe_total=145.0,
