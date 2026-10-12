@@ -91,7 +91,6 @@ class PestanaDeclaracion(ttk.Frame):
         fuente_grupo = font.nametofont("TkDefaultFont").copy()
         fuente_grupo.configure(weight="bold")
         self.tabla.tag_configure("grupo", font=fuente_grupo)
-        self._aplicar_colores_grupo()
         anchos = {"credito": 90, "fecha": 90, "emisor": 320, "receptor": 130,
                   "base": 90, "iva": 80, "total": 90, "tipo": 120}
         titulos = {"credito": "Crédito", "fecha": "Fecha", "emisor": "Emisor",
@@ -361,18 +360,11 @@ class PestanaDeclaracion(ttk.Frame):
         clave = self._CLAVES_ORDEN[columna]
         filas.sort(key=lambda fila: clave(fila[1]), reverse=descendente)
 
-        self._aplicar_colores_grupo()
         if self.var_agrupar.get():
             self._insertar_agrupado(filas, columna, descendente)
         else:
-            # Sin agrupar: el color cambia cada vez que cambia el emisor (se ve
-            # mejor ordenando por la columna Emisor).
-            banda, emisor_previo = -1, None
             for indice, c in filas:
-                emisor = c.ruc_emisor or c.razon_social_emisor
-                if emisor != emisor_previo:
-                    banda, emisor_previo = (banda + 1) % len(self._BANDAS_CLARO), emisor
-                self._insertar_factura("", indice, c, f"banda{banda}")
+                self._insertar_factura("", indice, c)
 
         # Mantener seleccionada la misma factura (por identidad, no por índice).
         iid = next((str(i) for i, c in filas if c is anterior), None)
@@ -383,8 +375,8 @@ class PestanaDeclaracion(ttk.Frame):
         self._mostrar_detalle()
         self._actualizar_totales()
 
-    def _insertar_factura(self, padre: str, indice: int, c: Comprobante, banda: str) -> None:
-        self.tabla.insert(padre, "end", iid=str(indice), tags=(banda,), values=(
+    def _insertar_factura(self, padre: str, indice: int, c: Comprobante) -> None:
+        self.tabla.insert(padre, "end", iid=str(indice), values=(
             self._texto_credito(c),
             c.fecha_emision.strftime("%d/%m/%Y"),
             c.razon_social_emisor,
@@ -417,14 +409,11 @@ class PestanaDeclaracion(ttk.Frame):
         else:
             orden_grupos = list(grupos)  # según su primera factura ya ordenada
 
-        for numero, ruc in enumerate(orden_grupos):
+        for ruc in orden_grupos:
             miembros = grupos[ruc]
-            banda = numero % len(self._BANDAS_CLARO)
             if len(miembros) == 1:
-                # Una sola factura: no hace falta expandir, va directa con el
-                # color de cabecera para distinguirla de sus vecinas.
-                indice, c = miembros[0]
-                self._insertar_factura("", indice, c, f"cab{banda}")
+                # Una sola factura: no hace falta expandir, va directa.
+                self._insertar_factura("", *miembros[0])
                 continue
             primero = miembros[0][1]
             gravadas = [c for _, c in miembros if c.iva > 0]
@@ -432,7 +421,7 @@ class PestanaDeclaracion(ttk.Frame):
             credito = f"{con_credito}/{len(gravadas)}" if gravadas else "— 0%"
             iid = f"g:{ruc}"
             self.tabla.insert("", "end", iid=iid, open=iid not in self._grupos_cerrados,
-                              tags=("grupo", f"cab{banda}"), values=(
+                              tags=("grupo",), values=(
                 credito,
                 f"{len(miembros)} doc.",
                 primero.razon_social_emisor,
@@ -443,33 +432,7 @@ class PestanaDeclaracion(ttk.Frame):
                 "",
             ))
             for indice, c in miembros:
-                self._insertar_factura(iid, indice, c, f"banda{banda}")
-
-    def _modo_oscuro(self) -> bool:
-        """True si el fondo de la tabla es oscuro (p. ej. modo oscuro de macOS)."""
-        fondo = ttk.Style().lookup("Treeview", "fieldbackground") or \
-            ttk.Style().lookup("Treeview", "background") or "white"
-        try:
-            r, g, b = (v / 65535 for v in self.tabla.winfo_rgb(fondo))
-        except tk.TclError:
-            return False
-        return 0.299 * r + 0.587 * g + 0.114 * b < 0.5
-
-    # Bandas de color por emisor: (cabecera, facturas). Azul, verde, morado, ámbar.
-    _BANDAS_OSCURO = [("#2f4d78", "#223955"), ("#2a6350", "#1d4538"),
-                      ("#523c72", "#3a2b52"), ("#634e2a", "#46381e")]
-    _BANDAS_CLARO = [("#c9daf2", "#e6eefa"), ("#c6e8d4", "#e5f5eb"),
-                     ("#ddcff0", "#f0e9f9"), ("#f0dcb4", "#faf1df")]
-
-    def _aplicar_colores_grupo(self) -> None:
-        # Fondo y texto explícitos para que el contraste no dependa del tema:
-        # en modo oscuro el texto del sistema es blanco y un fondo claro lo oculta.
-        oscuro = self._modo_oscuro()
-        texto = "#ffffff" if oscuro else "#000000"
-        bandas = self._BANDAS_OSCURO if oscuro else self._BANDAS_CLARO
-        for i, (cabecera, facturas) in enumerate(bandas):
-            self.tabla.tag_configure(f"cab{i}", background=cabecera, foreground=texto)
-            self.tabla.tag_configure(f"banda{i}", background=facturas, foreground=texto)
+                self._insertar_factura(iid, indice, c)
 
     def _recordar_grupos(self, _evento=None) -> None:
         # El evento llega antes de cambiar el estado: se lee después.
