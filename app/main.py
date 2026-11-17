@@ -85,11 +85,18 @@ def ejecutar_cli(argumentos: list[str]) -> int:
 
 
 def _selftest() -> int:
-    """Verifica que Playwright + Chrome funcionan (útil en el ejecutable empaquetado)."""
+    """Diagnóstico del ejecutable empaquetado.
+
+    Verifica que Playwright lanza Chrome, que ``keyring`` encuentra un almacén
+    de credenciales real (no ``fail.Keyring``) y que se puede escribir en la
+    ruta base de los clientes. Escribe el detalle en ``<temp>/sri_selftest.log``;
+    devuelve 0 solo si todo está bien.
+    """
     import os
     import tempfile
 
     log_path = os.path.join(tempfile.gettempdir(), "sri_selftest.log")
+    fallos = 0
     with open(log_path, "w", encoding="utf-8") as f:
         try:
             from playwright.sync_api import sync_playwright
@@ -104,10 +111,59 @@ def _selftest() -> int:
                 page.goto("about:blank")
                 browser.close()
             f.write("OK: Playwright pudo lanzar Chrome.\n")
-            return 0
         except Exception as e:  # noqa: BLE001
-            f.write(f"FAIL: {e!r}\n")
-            return 1
+            fallos += 1
+            f.write(f"FAIL: Playwright/Chrome: {e!r}\n")
+
+        try:
+            from .core import cifrado
+
+            real, nombre = cifrado.backend_real()
+            if real:
+                f.write(f"OK: almacén de credenciales: {nombre}.\n")
+            else:
+                fallos += 1
+                f.write(
+                    f"FAIL: sin almacén de credenciales ({nombre}); la app pedirá una "
+                    "frase de paso para proteger las claves.\n"
+                )
+        except Exception as e:  # noqa: BLE001
+            fallos += 1
+            f.write(f"FAIL: keyring: {e!r}\n")
+
+        try:
+            # Cifrado y Argon2 son extensiones nativas: comprobar que entraron al bundle.
+            from .core import cifrado
+
+            llave = cifrado.generar_llave()
+            nonce, c = cifrado.cifrar(llave, 1, "prueba", "1790011674001", "selftest")
+            assert cifrado.descifrar(llave, 1, nonce, c, "1790011674001", "selftest") == "prueba"
+            copia = cifrado.exportar_copia(llave, 1, "frase de selftest")
+            assert cifrado.importar_copia(copia, "frase de selftest") == (1, llave)
+            f.write("OK: AES-GCM y Argon2id funcionan.\n")
+        except Exception as e:  # noqa: BLE001
+            fallos += 1
+            f.write(f"FAIL: cifrado: {e!r}\n")
+
+        try:
+            from .core import plataforma
+
+            base = plataforma.base_path()
+            creada = not base.exists()
+            base.mkdir(parents=True, exist_ok=True)
+            prueba = base / ".selftest"
+            plataforma.escribir_atomico(prueba, b"ok")
+            prueba.unlink()
+            if creada:
+                base.rmdir()  # el diagnóstico no deja carpetas nuevas
+            f.write(f"OK: se puede escribir en la ruta base {base}.\n")
+            nube = plataforma.carpeta_en_nube(base)
+            if nube:
+                f.write(f"AVISO: la ruta base está dentro de {nube}.\n")
+        except Exception as e:  # noqa: BLE001
+            fallos += 1
+            f.write(f"FAIL: ruta base: {e!r}\n")
+    return 1 if fallos else 0
 
 
 def main() -> int:

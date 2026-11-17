@@ -335,6 +335,21 @@ def crear_cliente(ruc: str, nombre: str, clave: str) -> Cliente:
 | **C · Descarga** | Destino por cliente, borrado de cookies del SRI, comprobación de comprador, candado | Dos clientes seguidos dejan cada XML en su carpeta |
 | **D · Cierre** | Carpeta de resultados por defecto, `.spec`, `--selftest`, README | Ejecutables arrancan y guardan una clave; README actualizado |
 
+### Estado (2026-11-17, rama `clientes-claves-cifradas`)
+
+| PR | Estado |
+|---|---|
+| A · Núcleo | ✅ Hecho y probado (Python 3.10 y 3.12, macOS) |
+| B · Clientes | ✅ Hecho: pestaña, selector global, copia de emergencia, respaldo completo, importación de `SRI_CLAVE`, frase de paso sin almacén del sistema |
+| C · Descarga | ✅ Hecho: destino por cliente, cookies del SRI, comprobación de comprador, candado, aviso de clave rechazada |
+| D · Cierre | ✅ Resultados por cliente + bitácora, `.spec`, `--selftest` (Chrome, keyring, cifrado, ruta base), README. Ejecutable de macOS verificado; Windows/Linux pendientes de CI |
+
+Pendiente de verificar a mano: alta/edición en Windows y Ubuntu, descarga real de
+dos clientes seguidos contra el portal del SRI.
+
+> La rama incluye `declaracion-ventas0-detalle` (fusionada): conviene mergear esa
+> rama a `main` antes que esta, o abrir un solo MR con ambas.
+
 ## 12. Reglas de trabajo
 
 - Partir de `main` actualizado, rama nueva (`clientes-claves-cifradas`), push de la rama; nunca a `main`.

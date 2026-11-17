@@ -76,9 +76,59 @@ python -m app.main  # equivalente, si ya activó el venv
 > Python del sistema. Con otro intérprete la descarga falla con
 > `No module named 'playwright'`.
 
-### Valores por defecto (opcional)
+### Clientes
+La pestaña **Clientes** guarda los contribuyentes con los que trabaja: RUC,
+nombre y **clave de SRI en línea cifrada** (AES-256-GCM). La llave maestra que
+protege las claves vive en el almacén de credenciales del sistema: Administrador
+de credenciales (Windows), Llavero (macOS) o GNOME Keyring (Ubuntu). La clave
+nunca se muestra: solo se puede reemplazar.
+
+Al registrar un cliente se crea su carpeta:
+
+```
+~/ComprobantesSRI/                ← ruta base (configurable en «Clientes»)
+└── clientes/
+    ├── 1712345678/               ← persona natural: su cédula
+    │   ├── descargas/recibidos_2026_10_todos/
+    │   └── resultados/2026-10/   ← .iva.json, Excel, PDF, CSV
+    └── 1790012345001/            ← sociedad / entidad pública: su RUC
+```
+
+El combo **Cliente** de la parte superior elige el cliente activo para todas las
+pestañas: la descarga usa su RUC, su clave y su carpeta, y al guardar o exportar
+se propone su carpeta `resultados/<AAAA-MM>/`. Con «— Sin cliente registrado —»
+la app funciona como antes (RUC, clave y carpeta a mano).
+
+- **Copia de emergencia**: «Exportar copia de emergencia…» guarda la llave
+  maestra cifrada con una frase de paso (archivo `.llave`). Guárdela **fuera del
+  equipo**. Sin la llave y sin la copia, las claves guardadas se pierden y hay
+  que volver a pedirlas a cada cliente. «Respaldo completo…» guarda la base de
+  clientes junto con la copia.
+- La base de clientes (SQLite) está en `%LOCALAPPDATA%\ComprobantesSRI`
+  (Windows), `~/Library/Application Support/ComprobantesSRI` (macOS) o
+  `~/.local/share/ComprobantesSRI` (Linux). No la mueva a una carpeta
+  sincronizada (OneDrive, iCloud, Dropbox): SQLite puede corromperse.
+- Si la ruta base cae dentro de una carpeta en la nube, la app avisa: son datos
+  personales y tributarios de terceros (LOPDP).
+- Antes de descargar para un cliente se cierra cualquier sesión previa del SRI
+  (solo se borran las cookies `*.sri.gob.ec`, no el perfil de Chrome), y un XML
+  cuyo comprador no es el cliente no se guarda en su carpeta.
+
+**Ubuntu**: hace falta un llavero desbloqueado (GNOME Keyring / Secret Service).
+Con inicio de sesión automático el llavero no se desbloquea solo y el sistema
+pedirá su contraseña la primera vez. Si no hay llavero, la app protege las claves
+con una frase de paso que pide cada vez que se abre.
+
+**macOS**: si el `.app` no está firmado, el Llavero vuelve a pedir permiso tras
+cada actualización de la app (el acceso va ligado a la firma).
+
+### Valores por defecto (opcional, obsoleto para la clave)
+`SRI_CLAVE` deja la clave en texto plano: es preferible registrar el cliente. Si
+la app encuentra `SRI_CLAVE`, la pestaña **Clientes** ofrece importarla cifrada y
+luego quitarla del `.env`.
+
 Copie `.env.example` a `.env` y complete las variables para que la pestaña
-**Descarga** se autocomplete al abrir. La app lee el `.env` por su cuenta, así
+**Descarga** se autocomplete al abrir (descarga sin cliente registrado). La app lee el `.env` por su cuenta, así
 que funciona igual con `./run.sh`, con `python -m app.main` o con el ejecutable
 empaquetado. `.env` está en `.gitignore`: las credenciales no se versionan.
 
@@ -93,7 +143,8 @@ prioridad sobre el archivo.
 | `SRI_DIR` | Directorio de descarga |
 
 ### 1 · Descarga
-Ingrese RUC/cédula y clave, seleccione año/mes/día y los tipos de comprobante,
+Con un cliente activo basta elegir el periodo y los tipos. Sin cliente,
+ingrese RUC/cédula y clave, seleccione año/mes/día y los tipos de comprobante,
 elija la carpeta de descarga e **Iniciar descarga**. Se abre una ventana de
 Chrome (modo visible) que hace todo el proceso; al terminar, la app pasa
 automáticamente a **Análisis** apuntando a la carpeta descargada.
@@ -146,7 +197,8 @@ el driver de Playwright y los `assets/`, pero no los navegadores):
 ```
 
 Diagnóstico incluido: `ComprobantesSRI --selftest` verifica que Playwright puede
-lanzar Chrome y escribe el resultado en `<temp>/sri_selftest.log` (código 0 = OK).
+lanzar Chrome, que hay un almacén de credenciales real y que se puede escribir
+en la ruta base; escribe el resultado en `<temp>/sri_selftest.log` (código 0 = OK).
 
 En la nube, `.github/workflows/build.yml` corre las pruebas, compila **Windows**
 (`windows-latest`) y **Linux** (`ubuntu-22.04`) y publica los paquetes en el
@@ -166,6 +218,11 @@ app/
   main.py                 CLI (declaración desde TXT) + GUI + --selftest
   core/
     sri_downloader.py     Descarga automatizada (Playwright)
+    clientes.py           Registro de clientes, claves y carpetas
+    cifrado.py            Llave maestra (keyring), AES-GCM, copia de emergencia
+    db.py                 Base SQLite (esquema y migraciones)
+    ruc.py                Validación de RUC / cédula
+    plataforma.py         Rutas, permisos y detalles por sistema operativo
     analizador.py         Parseo de XML + totales del lote + exportación
     adaptador.py          Puente XML → modelo de la declaración
     parser.py             Lectura del TXT de «Recibidos» (flujo alterno)
@@ -173,7 +230,11 @@ app/
     clasificador.py       Clasificación con/sin crédito
     calculadora.py        Cálculo de los casilleros
   gui/
-    main_window.py        Ventana con las 3 pestañas
+    main_window.py        Ventana: selector de cliente + pestañas
+    contexto.py           Cliente activo compartido por las pestañas
+    selector_cliente.py   Combo «Cliente» global
+    dialogos.py           Alta de cliente, clave y frase de paso
+    pestana_clientes.py   Pestaña Clientes
     pestana_descarga.py   Pestaña 1 · Descarga
     pestana_analisis.py   Pestaña 2 · Análisis
     pestana_declaracion.py Pestaña 3 · Declaración
