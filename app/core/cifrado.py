@@ -111,6 +111,59 @@ class LlaveroSistema:
             ) from None
 
 
+class LlaveroArchivo:
+    """Alternativa sin almacén del sistema (p. ej. Linux sin Secret Service).
+
+    La llave se guarda en ``carpeta/llave_v<N>.llave`` cifrada con una frase de
+    paso (mismo formato que la copia de emergencia). ``obtener_frase(nueva)``
+    la pide al usuario la primera vez que hace falta (``nueva`` es True si se va
+    a crear) y debe devolver ``None`` si cancela. La frase queda en memoria
+    mientras la app está abierta.
+    """
+
+    def __init__(self, carpeta, obtener_frase) -> None:
+        from pathlib import Path
+
+        self.carpeta = Path(carpeta)
+        self._obtener_frase = obtener_frase
+        self._frase: str | None = None
+        self._cache: dict[int, bytes] = {}
+
+    def _ruta(self, version: int):
+        return self.carpeta / f"llave_v{version}{EXTENSION_COPIA}"
+
+    def _frase_para(self, nueva: bool) -> str:
+        if self._frase is None:
+            frase = self._obtener_frase(nueva)
+            if not frase:
+                raise LlaveNoDisponible("Se necesita la frase de paso para usar las claves.")
+            self._frase = frase
+        return self._frase
+
+    def leer(self, version: int) -> bytes | None:
+        if version in self._cache:
+            return self._cache[version]
+        ruta = self._ruta(version)
+        if not ruta.exists():
+            return None
+        try:
+            leida, llave = importar_copia(ruta.read_bytes(), self._frase_para(nueva=False))
+        except CopiaInvalida:
+            self._frase = None  # permitir reintentar con otra frase
+            raise
+        if leida != version:
+            raise LlaveNoCorresponde("El archivo de la llave está dañado.")
+        self._cache[version] = llave
+        return llave
+
+    def guardar(self, version: int, llave: bytes) -> None:
+        from . import plataforma
+
+        datos = exportar_copia(llave, version, self._frase_para(nueva=True))
+        plataforma.escribir_atomico(self._ruta(version), datos)
+        self._cache[version] = llave
+
+
 def backend_real() -> tuple[bool, str]:
     """(hay_almacén_utilizable, nombre_del_backend).
 

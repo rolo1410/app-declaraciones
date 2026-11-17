@@ -80,3 +80,31 @@ def test_el_directorio_actual_se_busca_antes_que_la_raiz(tmp_path, monkeypatch):
     """La primera ruta candidata es el directorio de trabajo."""
     monkeypatch.chdir(tmp_path)
     assert preferencias.rutas_env()[0] == str(tmp_path / ".env")
+
+
+def test_clave_heredada_del_archivo(monkeypatch, tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("SRI_RUC=1790011674001\nSRI_CLAVE=ficticia\n", encoding="utf-8")
+    _aislar(monkeypatch, str(env))
+    assert preferencias.clave_heredada() == {
+        "ruc": "1790011674001", "clave": "ficticia", "origen": str(env)}
+
+
+def test_clave_heredada_vacia(monkeypatch, tmp_path):
+    _aislar(monkeypatch)
+    assert preferencias.clave_heredada() == {}
+
+
+def test_clave_heredada_del_entorno(monkeypatch):
+    _aislar(monkeypatch)
+    monkeypatch.setenv("SRI_CLAVE", "ficticia")
+    assert preferencias.clave_heredada()["origen"] == "entorno"
+
+
+def test_quitar_variable_conserva_lo_demas(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("# credenciales\nSRI_RUC=1\nexport SRI_CLAVE='x'\nSRI_CLAVE_OTRA=y\n",
+                   encoding="utf-8")
+    assert preferencias.quitar_variable(str(env), "SRI_CLAVE") is True
+    assert env.read_text(encoding="utf-8") == "# credenciales\nSRI_RUC=1\nSRI_CLAVE_OTRA=y\n"
+    assert preferencias.quitar_variable(str(env), "SRI_CLAVE") is False

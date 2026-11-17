@@ -96,3 +96,59 @@ def cargar() -> Dict[str, str]:
         if valor:
             valores[campo] = valor
     return valores
+
+
+def archivo_env_activo() -> str | None:
+    """El ``.env`` que se está usando (el primero que existe), o ``None``."""
+    for ruta in rutas_env():
+        if os.path.isfile(ruta):
+            return ruta
+    return None
+
+
+def clave_heredada() -> Dict[str, str]:
+    """RUC y clave de ``SRI_RUC``/``SRI_CLAVE`` para importarlos a un cliente.
+
+    Devuelve ``{}`` si no hay clave. ``origen`` es ``"entorno"`` o la ruta del
+    ``.env``. ``SRI_CLAVE`` queda obsoleta: la clave debe vivir cifrada en el
+    registro de clientes.
+    """
+    clave_entorno = os.environ.get(CAMPOS["clave"], "").strip()
+    valores = cargar()
+    if not valores.get("clave"):
+        return {}
+    return {
+        "ruc": valores.get("ruc", ""),
+        "clave": valores["clave"],
+        "origen": "entorno" if clave_entorno else (archivo_env_activo() or ""),
+    }
+
+
+def quitar_variable(ruta: str, variable: str) -> bool:
+    """Elimina del ``.env`` las líneas que definen ``variable``.
+
+    Conserva el resto del archivo (comentarios incluidos). Devuelve True si
+    quitó algo.
+    """
+    try:
+        with open(ruta, encoding="utf-8") as fh:
+            lineas = fh.readlines()
+    except OSError:
+        return False
+
+    def _define(linea: str) -> bool:
+        texto = linea.strip()
+        if texto.startswith("export "):
+            texto = texto[len("export "):].lstrip()
+        nombre, igual, _ = texto.partition("=")
+        return bool(igual) and nombre.strip() == variable
+
+    restantes = [ln for ln in lineas if not _define(ln)]
+    if len(restantes) == len(lineas):
+        return False
+    from pathlib import Path
+
+    from . import plataforma
+
+    plataforma.escribir_atomico(Path(ruta), "".join(restantes).encode("utf-8"))
+    return True

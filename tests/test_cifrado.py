@@ -110,3 +110,30 @@ def test_backend_real_detecta_fail():
     assert cifrado.backend_real()[0] is True  # el de memoria cuenta como real
     keyring.set_keyring(fail.Keyring())
     assert cifrado.backend_real()[0] is False
+
+
+def test_llavero_archivo_sin_almacen_del_sistema(tmp_path):
+    pedidas = []
+
+    def frase(nueva):
+        pedidas.append(nueva)
+        return "frase de paso larga"
+
+    llavero = cifrado.LlaveroArchivo(tmp_path, frase)
+    assert llavero.leer(1) is None
+    llave = cifrado.generar_llave()
+    llavero.guardar(1, llave)
+    assert pedidas == [True]
+    # Otra sesión de la app: pide la frase para leer.
+    otro = cifrado.LlaveroArchivo(tmp_path, frase)
+    assert otro.leer(1) == llave
+    assert pedidas == [True, False]
+
+
+def test_llavero_archivo_frase_incorrecta_y_cancelada(tmp_path):
+    cifrado.LlaveroArchivo(tmp_path, lambda n: "frase de paso larga").guardar(
+        1, cifrado.generar_llave())
+    with pytest.raises(cifrado.CopiaInvalida):
+        cifrado.LlaveroArchivo(tmp_path, lambda n: "otra frase larga!").leer(1)
+    with pytest.raises(cifrado.LlaveNoDisponible):
+        cifrado.LlaveroArchivo(tmp_path, lambda n: None).leer(1)
