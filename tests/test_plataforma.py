@@ -99,3 +99,28 @@ def test_restringir_permisos_posix(tmp_path):
 @pytest.mark.skipif(sys.platform != "win32", reason="solo Windows")
 def test_restringir_permisos_windows_dentro_del_perfil_no_falla(tmp_path):
     plataforma.restringir_permisos(tmp_path)
+
+
+def test_candado_excluye_entre_procesos(tmp_path):
+    import subprocess
+
+    ruta = tmp_path / "x.lock"
+    codigo = (
+        "import sys; from app.core.plataforma import Candado, CandadoOcupado\n"
+        f"c = Candado(r'{ruta}')\n"
+        "try:\n    c.adquirir()\nexcept CandadoOcupado:\n    sys.exit(3)\nsys.exit(0)\n"
+    )
+    raiz = Path(__file__).resolve().parents[1]
+    with plataforma.Candado(ruta):
+        r = subprocess.run([sys.executable, "-c", codigo], cwd=raiz)
+        assert r.returncode == 3
+    r = subprocess.run([sys.executable, "-c", codigo], cwd=raiz)
+    assert r.returncode == 0
+
+
+def test_candado_se_puede_reusar(tmp_path):
+    c = plataforma.Candado(tmp_path / "x.lock")
+    with c:
+        pass
+    with c:
+        pass

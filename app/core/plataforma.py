@@ -283,6 +283,74 @@ def escribir_atomico(ruta: Path, datos: bytes, intentos: int = 3) -> None:
         raise
 
 
+class CandadoOcupado(RuntimeError):
+    """Otra instancia de la app ya tiene el recurso."""
+
+
+class Candado:
+    """Candado entre procesos basado en un archivo (``with Candado(ruta):``).
+
+    Usa ``fcntl.flock`` (POSIX) o ``msvcrt.locking`` (Windows): el sistema lo
+    suelta solo si el proceso muere, así que nunca queda un candado huérfano.
+    Sirve para que dos ventanas de la app no abran a la vez el perfil de Chrome.
+    """
+
+    def __init__(self, ruta: Path) -> None:
+        self.ruta = Path(ruta)
+        self._fh = None
+
+    def adquirir(self) -> None:
+        self.ruta.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(self.ruta, "a+b")
+        try:
+            if ES_WINDOWS:
+                import msvcrt
+
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            fh.close()
+            raise CandadoOcupado(
+                "Ya hay una descarga en curso en otra ventana de la app. "
+                "Espere a que termine."
+            ) from None
+        self._fh = fh
+
+    def liberar(self) -> None:
+        fh, self._fh = self._fh, None
+        if fh is None:
+            return
+        try:
+            if ES_WINDOWS:
+                import msvcrt
+
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        finally:
+            fh.close()
+
+    def __enter__(self) -> "Candado":
+        self.adquirir()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.liberar()
+
+
+def candado_descargas() -> Candado:
+    return Candado(datos_dir() / "descarga.lock")
+
+
 def abrir_en_explorador(ruta: Path) -> None:
     """Abre una carpeta en el explorador de archivos del sistema."""
     ruta = str(ruta)

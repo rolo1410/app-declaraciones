@@ -32,9 +32,10 @@ import random
 import re
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable, List, Optional
+from typing import Callable, Collection, List, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +51,10 @@ PERFIL_URL = "https://srienlinea.sri.gob.ec/sri-en-linea/contribuyente/perfil"
 # Carpeta de perfil persistente de Chrome. Es CLAVE para el reCAPTCHA: acumula
 # reputación entre ejecuciones. No borrar entre corridas.
 PERFIL_DIR = os.path.join(os.path.expanduser("~"), ".sri_descargas", "perfil_chrome")
+
+# Cookies del SRI (portal y Keycloak). Borrarlas cierra la sesión sin tocar las
+# de Google, que son las que guardan la reputación del reCAPTCHA.
+DOMINIOS_SRI = re.compile(r"(^|\.)sri\.gob\.ec$")
 
 TIPO_RECIBIDOS = "recibidos"
 TIPO_EMITIDOS = "emitidos"
@@ -83,7 +88,7 @@ class DownloadConfig:
     """Parámetros que el usuario proporciona en tiempo de ejecución."""
 
     ruc: str
-    clave: str
+    clave: str = field(repr=False)
     anio: int
     mes: int
     dia: int  # 0 == todos los días del mes
@@ -99,6 +104,13 @@ class DownloadConfig:
     # Usar el Chromium de Playwright en vez del Chrome del sistema. Es la salida
     # cuando Chrome se cierra solo: es otro binario y no comparte el fallo.
     usar_chromium: bool = False
+    # Cliente registrado: identificaciones (RUC y cédula) con las que puede
+    # figurar como comprador. Un XML a nombre de otro no se guarda. None ==
+    # descarga sin cliente registrado (no se comprueba).
+    identificaciones_cliente: Optional[Collection[str]] = None
+    # Cerrar cualquier sesión previa del SRI antes de empezar, para no
+    # descargar con la sesión de otro contribuyente.
+    limpiar_sesion_sri: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -150,14 +162,36 @@ def validar_config(cfg: DownloadConfig) -> List[str]:
     return errores
 
 
+_RESERVADOS_WINDOWS = {"CON", "PRN", "AUX", "NUL"} | {
+    f"{base}{n}" for base in ("COM", "LPT") for n in range(1, 10)
+}
+LARGO_MAXIMO_NOMBRE = 100
+
+
 def sanitizar_nombre(nombre: str) -> str:
-    """Limpia un nombre de archivo para que sea válido en el sistema de archivos."""
-    nombre = (nombre or "").strip()
+    """Limpia un nombre de archivo para que sea válido en Windows, macOS y Linux.
+
+    * caracteres prohibidos en Windows y de control → ``_``;
+    * Unicode en NFC (macOS puede entregar ``ñ``/tildes descompuestos);
+    * nombres reservados de Windows (``CON``, ``COM1``…, también con extensión)
+      → prefijo ``_``;
+    * sin punto ni espacio final y como máximo 100 caracteres (conservando la
+      extensión) para no acercarse al límite de 260 de las rutas de Windows.
+    """
+    nombre = unicodedata.normalize("NFC", (nombre or "").strip())
     if not nombre:
         return "comprobante.xml"
     nombre = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", nombre)
     nombre = nombre.strip(". ")
-    return nombre or "comprobante.xml"
+    if not nombre:
+        return "comprobante.xml"
+    if nombre.split(".")[0].upper() in _RESERVADOS_WINDOWS:
+        nombre = "_" + nombre
+    if len(nombre) > LARGO_MAXIMO_NOMBRE:
+        base, ext = os.path.splitext(nombre)
+        ext = ext[:10]
+        nombre = base[: LARGO_MAXIMO_NOMBRE - len(ext)].rstrip(". ") + ext
+    return nombre
 
 
 def ruta_unica(directorio: str, nombre: str) -> str:
@@ -204,6 +238,23 @@ def es_error_navegador_cerrado(mensaje: str) -> bool:
     """True si el mensaje de Playwright indica que el navegador ya no existe."""
     texto = (mensaje or "").lower()
     return any(senal in texto for senal in _SENALES_NAVEGADOR_CERRADO)
+
+
+def comprador_ajeno(contenido: str, identificaciones: Optional[Collection[str]]) -> Optional[str]:
+    """Identificación del comprador si NO es del cliente; ``None`` si se acepta.
+
+    Se acepta cuando no hay cliente registrado (``identificaciones`` es None),
+    cuando el comprador es el RUC o la cédula del cliente, o cuando el
+    comprobante no trae comprador (p. ej. guía de remisión).
+    """
+    if identificaciones is None:
+        return None
+    from .analizador import identificacion_comprador
+
+    ident = identificacion_comprador(contenido)
+    if ident is None or ident in identificaciones:
+        return None
+    return ident
 
 
 def extraer_clave_acceso(contenido: str) -> Optional[str]:
@@ -350,6 +401,10 @@ class DownloadResult:
     paginas_procesadas: int = 0
     errores: List[str] = field(default_factory=list)
     carpeta_destino: str = ""
+    # True si el portal rechazó las credenciales (para ofrecer actualizar la clave).
+    error_login: bool = False
+    # XML descartados porque el comprador no es el cliente.
+    rechazados: int = 0
 
 
 LogFn = Callable[[str], None]
@@ -375,6 +430,7 @@ class SRIDownloader:
         self.stop_event = stop_event or threading.Event()
         # Señal que la GUI activa (botón "Continuar descarga") en modo semi-manual.
         self.continue_event = continue_event or threading.Event()
+        self.rechazados = 0
 
     # -- utilidades internas -------------------------------------------------
 
@@ -769,13 +825,27 @@ class SRIDownloader:
                 # Renombrar por clave de acceso (única y significativa).
                 nombre_final = sugerido
                 clave = None
+                contenido = ""
                 try:
                     with open(tmp, "r", encoding="utf-8", errors="ignore") as fh:
-                        clave = extraer_clave_acceso(fh.read())
+                        contenido = fh.read()
+                    clave = extraer_clave_acceso(contenido)
                     if clave:
                         nombre_final = f"{clave}.xml"
                 except Exception:
                     pass
+
+                # Defensa ante una sesión de otro contribuyente: un XML a nombre
+                # de otra persona no se guarda en la carpeta de este cliente.
+                ajeno = comprador_ajeno(contenido, self.cfg.identificaciones_cliente)
+                if ajeno is not None:
+                    os.remove(tmp)
+                    self.rechazados += 1
+                    self.log(
+                        f"    ✖ Fila {i + 1}: el comprador ({ajeno}) no es este cliente; "
+                        "no se guarda."
+                    )
+                    continue
 
                 # Con la clave de acceso el nombre es único por comprobante, así
                 # que si ya está en la carpeta es el mismo XML: se descarta la
@@ -913,13 +983,38 @@ class SRIDownloader:
         self.log(f"Carpeta de destino: {destino}")
 
         resultado = DownloadResult(carpeta_destino=destino)
+        self.rechazados = 0
+        try:
+            return self._run(sync_playwright, destino, resultado)
+        finally:
+            resultado.rechazados = self.rechazados
+            if self.rechazados:
+                msg = (
+                    f"{self.rechazados} comprobante(s) estaban a nombre de otro "
+                    "contribuyente y no se guardaron. Compruebe que la sesión del "
+                    "SRI corresponde a este cliente."
+                )
+                self.log("⚠ " + msg)
+                resultado.errores.append(msg)
 
+    def _cerrar_sesion_sri(self, ctx) -> None:
+        """Borra solo las cookies del SRI: obliga a iniciar sesión de nuevo."""
+        try:
+            ctx.clear_cookies(domain=DOMINIOS_SRI)
+            self.log("Sesión previa del SRI cerrada (se inicia de nuevo con este cliente).")
+        except Exception as e:  # noqa: BLE001
+            # Sin poder cerrar la sesión no es seguro seguir: podría ser de otro RUC.
+            raise RuntimeError(f"No se pudo cerrar la sesión previa del SRI: {e}") from e
+
+    def _run(self, sync_playwright, destino: str, resultado: DownloadResult) -> DownloadResult:
         with sync_playwright() as p:
             ctx = self._lanzar_contexto(p)
             ctx.set_default_timeout(self.cfg.nav_timeout_ms)
             ctx.add_init_script(STEALTH_JS)
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             try:
+                if self.cfg.limpiar_sesion_sri:
+                    self._cerrar_sesion_sri(ctx)
                 if self.cfg.semi_manual:
                     return self._flujo_semi_manual(ctx, page, destino, resultado)
 
@@ -964,6 +1059,7 @@ class SRIDownloader:
             except LoginError as e:
                 self.log(f"✖ {e}")
                 resultado.errores.append(str(e))
+                resultado.error_login = True
                 return resultado
             except NavegadorCerrado as e:
                 msg = (
