@@ -22,12 +22,21 @@ pw_datas, pw_binaries, pw_hiddenimports = collect_all("playwright")
 # Todos los submódulos del paquete de la app (core, gui, export).
 app_hiddenimports = collect_submodules("app")
 
+# keyring elige su backend en tiempo de ejecución (entry points): hay que
+# incluirlos todos explícitamente o el ejecutable cae en fail.Keyring.
+keyring_hiddenimports = collect_submodules("keyring.backends") + ["argon2", "_cffi_backend"]
+if sys.platform == "win32":
+    keyring_hiddenimports += ["win32ctypes.core"]
+elif sys.platform.startswith("linux"):
+    keyring_hiddenimports += ["secretstorage", "jeepney"]
+
 a = Analysis(
     ["launcher.py"],
     pathex=[],
     binaries=pw_binaries,
     datas=pw_datas + [("assets", "assets")],  # íconos y marca de agua
-    hiddenimports=pw_hiddenimports + app_hiddenimports + ["openpyxl", "reportlab"],
+    hiddenimports=pw_hiddenimports + app_hiddenimports + keyring_hiddenimports
+    + ["openpyxl", "reportlab"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
