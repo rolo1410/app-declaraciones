@@ -73,7 +73,10 @@ def guardar(sesion: Sesion, ruta: str | Path) -> None:
         "ventas": sesion.ventas,
         "comprobantes": [_comprobante_a_dict(c) for c in sesion.comprobantes],
     }
-    Path(ruta).write_text(json.dumps(contenido, ensure_ascii=False, indent=1), encoding="utf-8")
+    from . import plataforma
+
+    plataforma.escribir_atomico(
+        Path(ruta), json.dumps(contenido, ensure_ascii=False, indent=1).encode("utf-8"))
 
 
 def cargar(ruta: str | Path) -> Sesion:

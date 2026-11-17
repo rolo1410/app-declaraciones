@@ -8,6 +8,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from ..core import analizador as az
+from .contexto import periodo_mayoritario
 from .recursos import fmt
 
 
@@ -25,8 +26,9 @@ class PestanaAnalisis(ttk.Frame):
         ("ret", "Retenido", 90, "e"),
     ]
 
-    def __init__(self, master, on_enviar_declaracion=None) -> None:
+    def __init__(self, master, on_enviar_declaracion=None, contexto=None) -> None:
         super().__init__(master, padding=10)
+        self.contexto = contexto
         self._comprobantes: list[az.Comprobante] = []
         self._items: dict[str, az.Comprobante] = {}  # iid -> comprobante
         self._orden_col: str | None = None
@@ -115,7 +117,10 @@ class PestanaAnalisis(ttk.Frame):
 
     # -- acciones --
     def _elegir_carpeta(self) -> None:
-        carpeta = filedialog.askdirectory(title="Carpeta con los XML a analizar")
+        inicial = self.contexto.carpeta_descargas() if self.contexto else None
+        carpeta = filedialog.askdirectory(
+            title="Carpeta con los XML a analizar",
+            initialdir=str(inicial) if inicial else None)
         if carpeta:
             self.cargar_carpeta(carpeta)
 
@@ -278,32 +283,46 @@ class PestanaAnalisis(ttk.Frame):
         base = os.path.basename(self.var_carpeta.get().rstrip("/\\")) or "analisis"
         return f"analisis_{base}.{ext}"
 
-    def _exportar_csv(self) -> None:
-        ruta = filedialog.asksaveasfilename(
-            title="Guardar CSV", defaultextension=".csv",
-            initialfile=self._nombre_sugerido("csv"),
-            filetypes=[("CSV", "*.csv")],
+    def _carpeta_resultados(self):
+        """``resultados/<AAAA-MM>`` del cliente activo (período más frecuente del lote)."""
+        if self.contexto is None or self.contexto.cliente is None:
+            return None
+        periodo = periodo_mayoritario(c.fecha_emision for c in self._comprobantes)
+        return self.contexto.carpeta_resultados(periodo)
+
+    def _dialogo_guardar(self, titulo: str, ext: str, tipo: str) -> str:
+        carpeta = self._carpeta_resultados()
+        return filedialog.asksaveasfilename(
+            title=titulo, defaultextension=f".{ext}",
+            initialfile=self._nombre_sugerido(ext),
+            initialdir=str(carpeta) if carpeta else None,
+            filetypes=[(tipo, f"*.{ext}")],
         )
+
+    def _registrar(self, ruta: str) -> None:
+        if self.contexto is not None:
+            self.contexto.registrar("exportacion", ruta, "análisis")
+
+    def _exportar_csv(self) -> None:
+        ruta = self._dialogo_guardar("Guardar CSV", "csv", "CSV")
         if not ruta:
             return
         try:
             tot = az.calcular_totales(self._comprobantes)
             az.exportar_csv(self._comprobantes, tot, ruta)
+            self._registrar(ruta)
             messagebox.showinfo("Exportado", f"CSV guardado en:\n{ruta}")
         except Exception as e:  # noqa: BLE001
             messagebox.showerror("Error al exportar", str(e))
 
     def _exportar_xlsx(self) -> None:
-        ruta = filedialog.asksaveasfilename(
-            title="Guardar Excel", defaultextension=".xlsx",
-            initialfile=self._nombre_sugerido("xlsx"),
-            filetypes=[("Excel", "*.xlsx")],
-        )
+        ruta = self._dialogo_guardar("Guardar Excel", "xlsx", "Excel")
         if not ruta:
             return
         try:
             tot = az.calcular_totales(self._comprobantes)
             az.exportar_xlsx(self._comprobantes, tot, ruta)
+            self._registrar(ruta)
             messagebox.showinfo("Exportado", f"Excel guardado en:\n{ruta}")
         except ImportError:
             messagebox.showerror(

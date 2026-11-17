@@ -19,8 +19,9 @@ TITULO = "Declaración de IVA — SRI Ecuador"
 
 
 class PestanaDeclaracion(ttk.Frame):
-    def __init__(self, master) -> None:
+    def __init__(self, master, contexto=None) -> None:
         super().__init__(master, padding=8)
+        self.contexto = contexto
 
         self.comprobantes: list[Comprobante] = []
         self.advertencias: list[str] = []
@@ -262,10 +263,12 @@ class PestanaDeclaracion(ttk.Frame):
             messagebox.showinfo(TITULO, "No hay compras cargadas para guardar.")
             return
         periodo = self.combo_periodo.get()
+        carpeta = self._carpeta_resultados(periodo)
         ruta = filedialog.asksaveasfilename(
             title="Guardar trabajo de la declaración",
             defaultextension=sesion.EXTENSION,
             initialfile=f"declaracion_{periodo}{sesion.EXTENSION}",
+            initialdir=str(carpeta) if carpeta else None,
             filetypes=[("Trabajo de declaración", f"*{sesion.EXTENSION}"), ("Todos", "*.*")],
         )
         if not ruta:
@@ -283,11 +286,14 @@ class PestanaDeclaracion(ttk.Frame):
         except OSError as error:
             messagebox.showerror(TITULO, f"No se pudo guardar: {error}")
             return
+        self._registrar("trabajo_guardado", ruta)
         messagebox.showinfo(TITULO, f"Trabajo guardado en:\n{ruta}")
 
     def abrir_trabajo(self) -> None:
+        carpeta = self._carpeta_resultados(None)
         ruta = filedialog.askopenfilename(
             title="Abrir trabajo de la declaración",
+            initialdir=str(carpeta) if carpeta else None,
             filetypes=[("Trabajo de declaración", f"*{sesion.EXTENSION}"),
                        ("JSON", "*.json"), ("Todos", "*.*")],
         )
@@ -298,6 +304,8 @@ class PestanaDeclaracion(ttk.Frame):
         except ValueError as error:
             messagebox.showerror(TITULO, str(error))
             return
+        if not self._confirmar_cliente_del_trabajo(datos.ruc):
+            return
         for clave, entrada in self.entradas.items():
             entrada.delete(0, "end")
             entrada.insert(0, datos.ventas.get(clave, "0"))
@@ -305,6 +313,43 @@ class PestanaDeclaracion(ttk.Frame):
         self._establecer_comprobantes(
             datos.comprobantes, datos.advertencias, datos.ruc,
             datos.origen or Path(ruta).name, sugerir=False, periodo=datos.periodo)
+
+    # ------------------------------------------------- cliente activo
+    def _carpeta_resultados(self, periodo):
+        if self.contexto is None:
+            return None
+        return self.contexto.carpeta_resultados(periodo)
+
+    def _registrar(self, accion: str, ruta: str) -> None:
+        if self.contexto is not None:
+            self.contexto.registrar(accion, ruta)
+
+    def _confirmar_cliente_del_trabajo(self, ruc: str | None) -> bool:
+        """Avisa si el trabajo es de otro contribuyente y ofrece cambiar de cliente."""
+        if self.contexto is None or not ruc:
+            return True
+        activo = self.contexto.cliente
+        if activo is not None and ruc in activo.identificaciones:
+            return True
+        try:
+            duenio = self.contexto.registro.por_identificacion(ruc)
+        except Exception:  # noqa: BLE001
+            duenio = None
+        if duenio is not None and duenio.activo:
+            respuesta = messagebox.askyesnocancel(
+                TITULO, f"Este trabajo es de {duenio.nombre} ({duenio.ruc}).\n\n"
+                        "¿Cambiar el cliente activo a ese contribuyente?\n"
+                        "(No: abrirlo sin cambiar de cliente)")
+            if respuesta is None:
+                return False
+            if respuesta:
+                self.contexto.fijar(duenio)
+            return True
+        if activo is not None:
+            return messagebox.askyesno(
+                TITULO, f"Este trabajo es del RUC {ruc}, que no es el cliente activo "
+                        f"({activo.nombre}, {activo.ruc}).\n\n¿Abrirlo de todas formas?")
+        return True
 
     # -------------------------------------------------------------- acciones
     def _comprobantes_periodo(self):
@@ -598,7 +643,9 @@ class PestanaDeclaracion(ttk.Frame):
         if not self.declaracion:
             messagebox.showinfo(TITULO, "Primero calcule la declaración.")
             return
+        carpeta = self._carpeta_resultados(self.declaracion.periodo)
         ruta = filedialog.asksaveasfilename(
+            initialdir=str(carpeta) if carpeta else None,
             defaultextension=extension,
             initialfile=f"declaracion_iva_{self.declaracion.periodo}{extension}",
             filetypes=[(extension.upper().strip("."), f"*{extension}")],
@@ -610,6 +657,7 @@ class PestanaDeclaracion(ttk.Frame):
         except ImportError as error:
             messagebox.showerror(TITULO, f"Falta una dependencia para exportar: {error}")
             return
+        self._registrar("exportacion", ruta)
         messagebox.showinfo(TITULO, f"Reporte guardado en:\n{ruta}")
 
     def exportar_excel(self) -> None:
