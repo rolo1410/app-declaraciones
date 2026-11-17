@@ -210,17 +210,22 @@ def _sid_usuario_actual() -> str | None:
     return m.group(1) if m else None
 
 
-def restringir_permisos(ruta: Path) -> None:
+def restringir_permisos(ruta: Path, recursivo: bool = True) -> None:
     """Deja ``ruta`` accesible solo para el usuario actual.
 
-    * POSIX: ``0700`` en carpetas y ``0600`` en archivos (recursivo).
+    * POSIX: ``0700`` en carpetas y ``0600`` en archivos (``recursivo``: también
+      todo su contenido; si no, solo ``ruta``, que con ``0700`` ya impide a otros
+      usuarios entrar a lo que contiene).
     * Windows: dentro del perfil del usuario la ACL ya es privada y no se toca.
       Fuera del perfil se corta la herencia y se concede control total solo al
       usuario actual y a SYSTEM (copias de seguridad, antivirus).
     """
     ruta = Path(ruta)
     if not ES_WINDOWS:
-        _chmod_recursivo(ruta)
+        if recursivo:
+            _chmod_recursivo(ruta)
+        elif not ruta.is_symlink():
+            os.chmod(ruta, stat.S_IRWXU if ruta.is_dir() else stat.S_IRUSR | stat.S_IWUSR)
         return
     if dentro_de(ruta, Path.home()):
         return

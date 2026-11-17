@@ -63,7 +63,7 @@ def test_campos_obligatorios(registro, nombre, clave):
 
 
 def test_fallo_al_crear_carpeta_deshace_el_registro(registro, tmp_path, monkeypatch):
-    def falla(_ruta):
+    def falla(_ruta, recursivo=True):
         raise OSError("sin permisos")
 
     registro.listar()  # la base ya existe: el fallo es de la carpeta
@@ -82,7 +82,7 @@ def test_fallo_no_borra_carpeta_que_ya_existia(registro, tmp_path, monkeypatch):
     previa.mkdir(parents=True)
     (previa / "mio.txt").write_text("x")
     registro.listar()
-    monkeypatch.setattr(plataforma, "restringir_permisos", lambda r: (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(plataforma, "restringir_permisos", lambda r, recursivo=True: (_ for _ in ()).throw(OSError()))
     with pytest.raises(OSError):
         registro.crear_cliente(SOCIEDAD, "Empresa", CLAVE)
     assert (previa / "mio.txt").exists()
@@ -215,7 +215,7 @@ def test_copia_de_otra_base_se_rechaza(tmp_path, registro):
 def test_llave_creada_en_alta_fallida_se_reutiliza(registro, llavero_memoria, monkeypatch):
     registro.listar()
     original = plataforma.restringir_permisos
-    monkeypatch.setattr(plataforma, "restringir_permisos", lambda r: (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(plataforma, "restringir_permisos", lambda r, recursivo=True: (_ for _ in ()).throw(OSError()))
     with pytest.raises(OSError):
         registro.crear_cliente(SOCIEDAD, "E", CLAVE)
     guardada = dict(llavero_memoria.datos)
@@ -243,6 +243,7 @@ def test_permisos_posix(registro):
     carpeta = registro.carpeta_cliente(c)
     assert os.stat(carpeta).st_mode & 0o777 == 0o700
     assert os.stat(carpeta / "descargas").st_mode & 0o777 == 0o700
+    assert os.stat(carpeta.parent).st_mode & 0o777 == 0o700  # «clientes» lista las cédulas
 
 
 def test_hilos_distintos_pueden_usar_el_registro(registro):

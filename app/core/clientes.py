@@ -255,6 +255,7 @@ class Registro:
                 for sub in SUBCARPETAS:
                     (carpeta / sub).mkdir(parents=True, exist_ok=True)
                 plataforma.restringir_permisos(carpeta)
+                plataforma.restringir_permisos(carpeta.parent, recursivo=False)
                 cliente = self._obtener(cx, id_cliente)
         except BaseException:
             if nueva:
@@ -324,7 +325,10 @@ class Registro:
         carpeta = self.carpeta_cliente(cliente)
         for sub in SUBCARPETAS:
             (carpeta / sub).mkdir(parents=True, exist_ok=True)
-        plataforma.restringir_permisos(carpeta)
+        # Sin recorrer todos los XML del cliente en cada descarga: basta con
+        # que la carpeta del cliente y la de «clientes» estén en 0700.
+        for ruta in (carpeta.parent, carpeta, *(carpeta / sub for sub in SUBCARPETAS)):
+            plataforma.restringir_permisos(ruta, recursivo=False)
         return carpeta
 
     def registrar_evento(self, accion: str, id_cliente: int | None = None, detalle: str | None = None) -> None:
