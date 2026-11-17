@@ -9,10 +9,11 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from ..core import preferencias
+from ..core import cifrado, clientes, plataforma, preferencias
 from ..core.sri_downloader import (
     MESES,
     periodo_anterior,
+    subdirectorio_periodo,
     TIPO_RECIBIDOS,
     TIPOS_COMPROBANTE,
     DownloadConfig,
@@ -26,8 +27,12 @@ TIPOS_MARCADOS_POR_DEFECTO = {"1"}
 
 
 class PestanaDescarga(ttk.Frame):
-    def __init__(self, master, on_descarga_completa=None) -> None:
+    def __init__(self, master, on_descarga_completa=None, contexto=None) -> None:
         super().__init__(master, padding=12)
+        self.contexto = contexto
+        # Cliente con el que se lanzó la descarga en curso (puede cambiar el
+        # combo mientras tanto: la bitácora y el aviso de clave usan este).
+        self._cliente_descarga: clientes.Cliente | None = None
         self._log_queue: "queue.Queue[str]" = queue.Queue()
         self._worker: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -35,6 +40,10 @@ class PestanaDescarga(ttk.Frame):
         self._on_descarga_completa = on_descarga_completa
         self._ultimo_dir: str | None = None
         self._build_ui()
+        if contexto is not None:
+            contexto.al_cambiar_cliente(self._mostrar_cliente)
+            contexto.al_cambiar_lista(self._mostrar_cliente)
+        self._mostrar_cliente()
         self.after(100, self._poll_log_queue)
 
     def _build_ui(self) -> None:
@@ -42,9 +51,19 @@ class PestanaDescarga(ttk.Frame):
         # Valores por defecto guardados fuera del repo (ver app/core/preferencias.py).
         prefs = preferencias.cargar()
 
-        # --- Credenciales ---
-        frm_cred = ttk.LabelFrame(self, text="Credenciales SRI", padding=10)
+        # --- Cliente registrado (sustituye a credenciales y carpeta) ---
+        self.frm_cliente = ttk.LabelFrame(self, text="Cliente", padding=10)
+        self.lbl_cliente = ttk.Label(self.frm_cliente, text="", justify="left")
+        self.lbl_cliente.pack(side="left", fill="x", expand=True)
+        self.btn_cambiar_clave = ttk.Button(
+            self.frm_cliente, text="Cambiar clave…", command=self._cambiar_clave_cliente)
+        self.btn_cambiar_clave.pack(side="right")
+
+        # --- Credenciales (descarga sin cliente registrado) ---
+        frm_cred = ttk.LabelFrame(
+            self, text="Credenciales SRI (descarga sin cliente registrado)", padding=10)
         frm_cred.pack(fill="x", **pad)
+        self.frm_cred = frm_cred
 
         ttk.Label(frm_cred, text="RUC / C.I. / Pasaporte:").grid(row=0, column=0, sticky="w", pady=4)
         self.var_ruc = tk.StringVar(value=prefs.get("ruc", ""))
@@ -63,6 +82,7 @@ class PestanaDescarga(ttk.Frame):
         # --- Periodo ---
         frm_per = ttk.LabelFrame(self, text="Periodo a consultar", padding=10)
         frm_per.pack(fill="x", **pad)
+        self.frm_per = frm_per
 
         anio_actual = datetime.now().year
         # Por defecto, el mes anterior: es el periodo que se declara.
@@ -102,6 +122,7 @@ class PestanaDescarga(ttk.Frame):
         # --- Directorio ---
         frm_dir = ttk.LabelFrame(self, text="Directorio de descarga", padding=10)
         frm_dir.pack(fill="x", **pad)
+        self.frm_dir = frm_dir
         self.var_dir = tk.StringVar(value=prefs.get("download_dir", ""))
         ttk.Entry(frm_dir, textvariable=self.var_dir).pack(side="left", fill="x", expand=True)
         ttk.Button(frm_dir, text="Seleccionar...", command=self._elegir_directorio).pack(side="left", padx=8)
@@ -109,6 +130,7 @@ class PestanaDescarga(ttk.Frame):
         # --- Opciones ---
         frm_opt = ttk.Frame(self)
         frm_opt.pack(fill="x", **pad)
+        self.frm_opt = frm_opt
         self.var_headless = tk.BooleanVar(value=False)
         self.chk_headless = ttk.Checkbutton(
             frm_opt,
@@ -161,6 +183,42 @@ class PestanaDescarga(ttk.Frame):
         self.txt_log.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
 
+    # -- cliente registrado --
+    def _cliente(self) -> clientes.Cliente | None:
+        return self.contexto.cliente if self.contexto is not None else None
+
+    def _mostrar_cliente(self) -> None:
+        """Con cliente activo se ocultan RUC/clave/carpeta: salen del registro."""
+        pad = {"padx": 8, "pady": 4}
+        c = self._cliente()
+        if c is None:
+            self.frm_cliente.pack_forget()
+            self.frm_cred.pack(fill="x", before=self.frm_per, **pad)
+            self.frm_dir.pack(fill="x", before=self.frm_opt, **pad)
+            return
+        self.frm_cred.pack_forget()
+        self.frm_dir.pack_forget()
+        destino = self.contexto.registro.carpeta_descargas(c)
+        tiene_clave = self._tiene_clave(c)
+        texto = (f"{c.nombre}  ·  RUC {c.ruc}  ·  {c.nombre_tipo}\n"
+                 f"Destino: {destino}")
+        if not tiene_clave:
+            texto += "\n⚠ Sin clave registrada: use «Cambiar clave…» o el modo semi-manual."
+        self.lbl_cliente.configure(text=texto)
+        self.frm_cliente.pack(fill="x", before=self.frm_per, **pad)
+
+    def _tiene_clave(self, c: clientes.Cliente) -> bool:
+        try:
+            return self.contexto.registro.tiene_clave(c.id)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _cambiar_clave_cliente(self, cliente: clientes.Cliente | None = None) -> bool:
+        from .pestana_clientes import cambiar_clave_de
+
+        c = cliente or self._cliente()
+        return bool(c) and cambiar_clave_de(self, self.contexto, c)
+
     # -- helpers --
     def _toggle_clave(self) -> None:
         self.entry_clave.configure(show="" if self.var_ver_clave.get() else "•")
@@ -211,10 +269,37 @@ class PestanaDescarga(ttk.Frame):
             usar_chromium=self.var_chromium.get(),
         )
 
+    def _config_cliente(self, cfg: DownloadConfig, c: clientes.Cliente) -> bool:
+        """Completa ``cfg`` con el RUC, la clave (descifrada) y la carpeta del cliente."""
+        registro = self.contexto.registro
+        try:
+            cfg.download_dir = str(registro.asegurar_carpeta(c) / "descargas")
+        except OSError as e:
+            messagebox.showerror("Descarga", f"No se pudo crear la carpeta del cliente:\n{e}")
+            return False
+        cfg.ruc = c.ruc
+        cfg.identificaciones_cliente = frozenset(c.identificaciones)
+        cfg.limpiar_sesion_sri = True
+        cfg.clave = ""  # nunca la clave manual/.env para un cliente registrado
+        if cfg.semi_manual:
+            return True  # el usuario inicia sesión a mano: no hace falta la clave
+        if not self._tiene_clave(c):
+            if not self._cambiar_clave_cliente(c):
+                return False
+        try:
+            cfg.clave = registro.clave_de(c.id)
+        except (cifrado.ErrorCifrado, clientes.ErrorClientes) as e:
+            messagebox.showerror("Descarga", f"No se pudo obtener la clave de {c.nombre}:\n{e}")
+            return False
+        return True
+
     def _iniciar(self) -> None:
         if self._worker and self._worker.is_alive():
             return
         cfg = self._leer_config()
+        cliente = self._cliente()
+        if cliente is not None and not self._config_cliente(cfg, cliente):
+            return
         if cfg.semi_manual:
             # En semi-manual el usuario inicia sesión y consulta a mano: sólo
             # hace falta un directorio de descarga válido.
@@ -233,6 +318,7 @@ class PestanaDescarga(ttk.Frame):
         self._stop_event.clear()
         self._continue_event.clear()
         self._ultimo_dir = cfg.download_dir
+        self._cliente_descarga = cliente
         self.btn_iniciar.configure(state="disabled")
         self.btn_detener.configure(state="normal")
         if cfg.semi_manual:
@@ -249,7 +335,14 @@ class PestanaDescarga(ttk.Frame):
             self._log_queue.put(msg)
 
         carpeta_final = None
+        error_login = False
+        candado = plataforma.candado_descargas()
         try:
+            try:
+                candado.adquirir()
+            except plataforma.CandadoOcupado as e:
+                log_fn(f"✖ {e}")
+                return
             downloader = SRIDownloader(
                 cfg,
                 log_fn=log_fn,
@@ -257,6 +350,8 @@ class PestanaDescarga(ttk.Frame):
                 continue_event=self._continue_event,
             )
             resultado = downloader.run()
+            error_login = resultado.error_login
+            self._registrar_descarga(cfg, resultado)
             log_fn(
                 f"Resumen: {resultado.total_descargados} archivo(s), "
                 f"{resultado.paginas_procesadas} página(s)."
@@ -283,13 +378,39 @@ class PestanaDescarga(ttk.Frame):
         except Exception as e:  # noqa: BLE001
             log_fn(f"✖ Error inesperado: {e}")
         finally:
-            self.after(0, lambda: self._finalizar(carpeta_final))
+            candado.liberar()
+            cfg.clave = ""  # no conservar la clave en memoria más de lo necesario
+            self.after(0, lambda: self._finalizar(carpeta_final, error_login))
 
-    def _finalizar(self, carpeta: str | None = None) -> None:
+    def _registrar_descarga(self, cfg: DownloadConfig, resultado) -> None:
+        c = self._cliente_descarga
+        if c is None:
+            return
+        detalle = (f"descargas/{subdirectorio_periodo(cfg)}: "
+                   f"{resultado.total_descargados} archivo(s)")
+        if resultado.rechazados:
+            detalle += f", {resultado.rechazados} rechazado(s) por comprador ajeno"
+        if resultado.errores:
+            detalle += f", {len(resultado.errores)} incidencia(s)"
+        try:
+            self.contexto.registro.registrar_evento("descarga", c.id, detalle)
+        except Exception:  # noqa: BLE001 - la bitácora no debe romper la descarga
+            pass
+
+    def _finalizar(self, carpeta: str | None = None, error_login: bool = False) -> None:
         self.progress.stop()
         self.btn_iniciar.configure(state="normal")
         self.btn_detener.configure(state="disabled")
         self.btn_continuar.configure(state="disabled")
+        c = self._cliente_descarga
+        if error_login and c is not None:
+            # El SRI obliga a cambiar la clave cada cierto tiempo.
+            if messagebox.askyesno(
+                "Descarga",
+                f"El SRI rechazó la clave guardada de {c.nombre} ({c.ruc}).\n\n"
+                "¿Actualizar ahora la clave de este cliente?",
+            ):
+                self._cambiar_clave_cliente(c)
         if carpeta and self._on_descarga_completa is not None:
             self._on_descarga_completa(carpeta)
 
