@@ -34,3 +34,6 @@ Thumbs.db
 # Editores
 .vscode/
 .idea/
+
+# Credenciales locales del SRI (SRI_RUC / SRI_CLAVE / SRI_DIR)
+.env

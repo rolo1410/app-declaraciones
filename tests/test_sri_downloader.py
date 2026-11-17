@@ -18,6 +18,8 @@ from datetime import datetime
 from app.core.sri_downloader import (
     TIPO_EMITIDOS,
     TIPO_RECIBIDOS,
+    es_error_navegador_cerrado,
+    periodo_anterior,
     DownloadConfig,
     extraer_clave_acceso,
     ruta_unica,
@@ -29,7 +31,7 @@ from app.core.sri_downloader import (
 
 def _cfg(tmp_path, **overrides) -> DownloadConfig:
     base = dict(
-        ruc="1791287541001",
+        ruc="9999999999001",
         clave="secreto",
         anio=datetime.now().year,
         mes=6,
@@ -177,3 +179,41 @@ def test_clave_ausente_devuelve_none():
 
 def test_clave_ignora_numeros_de_otra_longitud():
     assert extraer_clave_acceso("<x><claveAcceso>12345</claveAcceso></x>") is None
+
+
+@pytest.mark.parametrize(
+    "mensaje",
+    [
+        "Download.save_as: Target page, context or browser has been closed",
+        "Locator.click: Target page, context or browser has been closed",
+        "Page.goto: Target crashed",
+        "Connection closed while reading from the driver",
+    ],
+)
+def test_reconoce_navegador_cerrado(mensaje):
+    assert es_error_navegador_cerrado(mensaje)
+
+
+@pytest.mark.parametrize(
+    "mensaje",
+    [
+        "Timeout 30000ms exceeded",
+        "strict mode violation: locator resolved to 2 elements",
+        "",
+    ],
+)
+def test_otros_errores_no_son_navegador_cerrado(mensaje):
+    assert not es_error_navegador_cerrado(mensaje)
+
+
+@pytest.mark.parametrize(
+    "hoy, esperado",
+    [
+        (datetime(2026, 9, 17), (2026, 8)),
+        (datetime(2026, 3, 1), (2026, 2)),
+        (datetime(2026, 12, 31), (2026, 11)),
+        (datetime(2026, 1, 5), (2025, 12)),   # enero retrocede de año
+    ],
+)
+def test_periodo_anterior(hoy, esperado):
+    assert periodo_anterior(hoy) == esperado

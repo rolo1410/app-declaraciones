@@ -42,6 +42,10 @@ from typing import Callable, List, Optional
 # ---------------------------------------------------------------------------
 
 LANDING_URL = "https://srienlinea.sri.gob.ec/sri-en-linea/inicio/NAT"
+# Destino del enlace "Iniciar sesión" del header. Navegar aquí equivale a
+# pulsarlo: si no hay sesión, el portal redirige a Keycloak generando state y
+# nonce nuevos; si la hay, carga el perfil del contribuyente.
+PERFIL_URL = "https://srienlinea.sri.gob.ec/sri-en-linea/contribuyente/perfil"
 
 # Carpeta de perfil persistente de Chrome. Es CLAVE para el reCAPTCHA: acumula
 # reputación entre ejecuciones. No borrar entre corridas.
@@ -92,6 +96,9 @@ class DownloadConfig:
     # Modo semi-manual: el usuario inicia sesión y hace la consulta a mano
     # (resolviendo el reCAPTCHA), y la app sólo descarga los XML resultantes.
     semi_manual: bool = False
+    # Usar el Chromium de Playwright en vez del Chrome del sistema. Es la salida
+    # cuando Chrome se cierra solo: es otro binario y no comparte el fallo.
+    usar_chromium: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -105,8 +112,16 @@ def validar_config(cfg: DownloadConfig) -> List[str]:
     ruc = (cfg.ruc or "").strip()
     if not ruc:
         errores.append("El RUC / C.I. / Pasaporte es obligatorio.")
-    elif not re.fullmatch(r"[0-9]{10,13}", ruc):
-        errores.append("El RUC / cédula debe contener solo dígitos (10 a 13).")
+    elif not ruc.isdigit():
+        errores.append("El RUC / cédula debe contener solo dígitos.")
+    elif len(ruc) not in (10, 13):
+        # El portal solo acepta cédula (10) o RUC (13 = cédula + 001); una
+        # longitud intermedia se rechaza como "usuario o clave incorrectos",
+        # lo que hace parecer que el error está en la clave.
+        errores.append(
+            f"Se ingresaron {len(ruc)} dígitos: la cédula debe tener 10 y el "
+            "RUC 13 (la cédula seguida de 001)."
+        )
 
     if not (cfg.clave or "").strip():
         errores.append("La clave es obligatoria.")
@@ -157,10 +172,38 @@ def ruta_unica(directorio: str, nombre: str) -> str:
     return candidato
 
 
+def periodo_anterior(hoy: Optional[datetime] = None) -> tuple:
+    """(año, mes) del mes anterior al de ``hoy``.
+
+    Es el periodo que normalmente se declara, y en enero retrocede a diciembre
+    del año previo.
+    """
+    hoy = hoy or datetime.now()
+    if hoy.month == 1:
+        return hoy.year - 1, 12
+    return hoy.year, hoy.month - 1
+
+
 def subdirectorio_periodo(cfg: DownloadConfig) -> str:
     """Nombre de subcarpeta sugerido para organizar la descarga por periodo."""
     dia = "todos" if cfg.dia == 0 else f"{cfg.dia:02d}"
     return f"{cfg.tipo}_{cfg.anio}_{cfg.mes:02d}_{dia}"
+
+
+# Fragmentos con los que Playwright avisa de que ya no hay navegador al otro
+# lado; cualquiera de ellos hace inútil seguir intentando con las demás filas.
+_SENALES_NAVEGADOR_CERRADO = (
+    "has been closed",
+    "target crashed",
+    "browser has disconnected",
+    "connection closed",
+)
+
+
+def es_error_navegador_cerrado(mensaje: str) -> bool:
+    """True si el mensaje de Playwright indica que el navegador ya no existe."""
+    texto = (mensaje or "").lower()
+    return any(senal in texto for senal in _SENALES_NAVEGADOR_CERRADO)
 
 
 def extraer_clave_acceso(contenido: str) -> Optional[str]:
@@ -181,7 +224,22 @@ class Selectors:
     USUARIO = "#usuario"
     PASSWORD = "#password"
     BTN_INGRESAR = "#kc-login"
+    # Campo opcional "C.I. adicional" (solo para usuario adicional autorizado).
+    CI_ADICIONAL = "#ciAdicional"
     TXT_INICIAR_SESION = "Iniciar sesión"
+    # Enlace "Iniciar sesión" del header de la landing. Su textContent incluye la
+    # ligadura del icono ("account_box Iniciar sesiónIniciar sesión"), por eso se
+    # busca por clase / aria-label / href antes que por texto.
+    LINK_INICIAR_SESION = (
+        "a.sri-tamano-link-iniciar-sesion",
+        'a[aria-label="Ir a iniciar sesión"]',
+        'a[href*="/contribuyente/perfil"]',
+    )
+    # Fragmento presente en la URL de Keycloak; la URL completa lleva state y
+    # nonce distintos en cada intento, así que nunca se navega a ella directamente.
+    URL_LOGIN = "auth/realms"
+    # Destino del redirect_uri: solo se alcanza con la sesión ya iniciada.
+    URL_AUTENTICADO = "/contribuyente/perfil"
     # Posibles contenedores del mensaje de error de credenciales (Keycloak/SRI).
     LOGIN_ERROR = (
         ".kc-feedback-text",
@@ -202,6 +260,13 @@ class Selectors:
     SELECT_DIA = "#frmPrincipal\\:dia"
     SELECT_TIPO = "#frmPrincipal\\:cmbTipoComprobante"
     BTN_CONSULTAR = "#frmPrincipal\\:btnBuscar"
+    # Alternativas por si cambia el id: el botón es un <button> de PrimeFaces
+    # cuyo rótulo vive en un <span> interno con el texto "Consultar".
+    BTN_CONSULTAR_ALT = (
+        "#frmPrincipal\\:btnConsultar",
+        "button:has(span:text-is('Consultar'))",
+        "span:text-is('Consultar')",
+    )
 
     # Tabla de resultados
     XML_LINKS = "a[id*='lnkXml']"
@@ -219,6 +284,14 @@ class LoginError(Exception):
     """Credenciales inválidas o login no completado."""
 
 
+class NavegadorCerrado(Exception):
+    """El navegador dejó de responder o se cerró en mitad del proceso."""
+
+
+class ElementoNoEncontrado(Exception):
+    """No se localizó un control esperado del portal (probable cambio de la web)."""
+
+
 class PaginacionError(Exception):
     """No se pudo avanzar de página tras los reintentos permitidos."""
 
@@ -229,6 +302,20 @@ MAX_REINTENTOS = 5
 # Script inyectado antes de cargar cualquier página para ocultar señales de
 # automatización. reCAPTCHA v3 asigna un puntaje según el "aspecto" del
 # navegador; cuantas menos huellas de bot detecte, más alto el puntaje.
+# Argumentos de arranque del navegador.
+#
+# Además de ocultar la automatización, se desactivan las tareas de fondo que
+# Chrome dispara al minuto de arrancar (component updater y descarga de modelos
+# del "optimization guide"). Se observó un segfault reproducible del proceso
+# principal a los ~58 s de cada arranque, siempre con la misma firma y con el
+# patrón de memoria liberada 0xcdcdcdcd, sin relación con el número de descargas.
+ARGS_NAVEGADOR = [
+    "--disable-blink-features=AutomationControlled",
+    "--disable-component-update",
+    "--disable-features=OptimizationGuideModelDownloading,OptimizationHints,"
+    "OptimizationTargetPrediction",
+]
+
 STEALTH_JS = """
 // navigator.webdriver -> undefined (la señal más obvia de automatización)
 Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
@@ -312,12 +399,33 @@ class SRIDownloader:
         page.wait_for_timeout(3000)
         self._check_stop()
 
-        # Si el formulario no está visible, entrar por "Iniciar sesión".
+        # Si el formulario no está visible, entrar por "Iniciar sesión". Se
+        # comprueba ANTES de pulsar si la sesión sigue viva: en ese caso el
+        # portal sustituye el enlace por el menú del contribuyente y el clic
+        # fallaría, abortando la ejecución.
         if page.locator(Selectors.PASSWORD).count() == 0:
-            enlace = page.get_by_text(Selectors.TXT_INICIAR_SESION, exact=False)
-            if enlace.count():
-                self.log("Entrando al formulario de login...")
-                enlace.first.click()
+            if self._sesion_activa_en_landing(page):
+                # Que falte el enlace no basta: la cookie puede estar caducada.
+                # Se abre el perfil para confirmarlo; si el portal devuelve el
+                # formulario, se sigue con el login normal.
+                page.goto(
+                    PERFIL_URL,
+                    wait_until="domcontentloaded",
+                    timeout=self.cfg.nav_timeout_ms,
+                )
+                if self._sesion_ya_abierta(page):
+                    self.log(
+                        "Ya hay una sesión abierta; se continúa sin volver a iniciarla."
+                    )
+                    return
+                self.log("La sesión anterior caducó; se inicia de nuevo.")
+
+            self.log("Entrando al formulario de login...")
+            self._click_iniciar_sesion(page)
+
+            if self._sesion_ya_abierta(page):
+                self.log("Ya había una sesión abierta en el perfil de Chrome.")
+                return
 
         page.wait_for_selector(Selectors.PASSWORD, timeout=self.cfg.nav_timeout_ms)
         page.wait_for_timeout(1000)
@@ -335,7 +443,7 @@ class SRIDownloader:
         exito = False
         for _ in range(24):  # ~12 s como máximo
             self._check_stop()
-            if "auth/realms" not in page.url:
+            if Selectors.URL_LOGIN not in page.url:
                 exito = True
                 break
             if self._hay_error_login(page):
@@ -354,6 +462,73 @@ class SRIDownloader:
             )
         self._check_stop()
         self.log("Sesión iniciada correctamente.")
+
+    def _click_iniciar_sesion(self, page) -> None:
+        """Pulsa el enlace "Iniciar sesión" de la landing y espera a Keycloak.
+
+        El enlace apunta a /contribuyente/perfil; Angular redirige al login de
+        Keycloak generando ``state`` y ``nonce`` nuevos en cada intento, por eso
+        se entra siempre por aquí y nunca por una URL de login fija.
+        """
+        for selector in Selectors.LINK_INICIAR_SESION:
+            enlace = page.locator(selector)
+            if enlace.count() and enlace.first.is_visible():
+                enlace.first.click()
+                break
+        else:
+            enlace = page.get_by_text(Selectors.TXT_INICIAR_SESION, exact=False)
+            if enlace.count():
+                enlace.first.click()
+            else:
+                # Sin enlace visible se navega a su destino, que es lo mismo que
+                # pulsarlo. Así un header inesperado no aborta el proceso.
+                self.log("  (Enlace no visible; se abre el perfil directamente.)")
+                page.goto(
+                    PERFIL_URL,
+                    wait_until="domcontentloaded",
+                    timeout=self.cfg.nav_timeout_ms,
+                )
+
+        try:
+            page.wait_for_url(
+                lambda url: Selectors.URL_LOGIN in url, timeout=self.cfg.nav_timeout_ms
+            )
+        except Exception:  # noqa: BLE001 - el wait_for_selector posterior decide
+            pass
+
+    def _sesion_activa_en_landing(self, page) -> bool:
+        """True si la landing ya se ve con la sesión iniciada.
+
+        El enlace «Iniciar sesión» solo existe cuando NO hay sesión; con sesión
+        activa el header muestra el menú del contribuyente. Se sondea unos
+        segundos porque Angular pinta la cabecera con retraso.
+        """
+        for _ in range(6):  # ~3 s
+            self._check_stop()
+            for selector in Selectors.LINK_INICIAR_SESION:
+                enlace = page.locator(selector)
+                if enlace.count() and enlace.first.is_visible():
+                    return False
+            page.wait_for_timeout(500)
+        return True
+
+    def _sesion_ya_abierta(self, page) -> bool:
+        """True si el portal saltó el formulario porque la sesión sigue viva.
+
+        El perfil persistente de Chrome (necesario para el reCAPTCHA) conserva
+        las cookies del SRI entre ejecuciones, así que cerrar el navegador no
+        cierra la sesión. Cuando sigue abierta, Keycloak redirige directo al
+        perfil del contribuyente y el campo de clave nunca aparece: sin esta
+        comprobación la espera agotaría el tiempo y la descarga fallaría.
+        """
+        for _ in range(10):  # ~5 s
+            self._check_stop()
+            if page.locator(Selectors.PASSWORD).count():
+                return False
+            if Selectors.URL_AUTENTICADO in page.url:
+                return True
+            page.wait_for_timeout(500)
+        return False
 
     def _hay_error_login(self, page) -> bool:
         """True si el portal muestra un mensaje de error de credenciales."""
@@ -514,6 +689,21 @@ class SRIDownloader:
         page.select_option(Selectors.SELECT_DIA, value=str(self.cfg.dia))
         page.select_option(Selectors.SELECT_TIPO, value=tipo_codigo)
 
+    def _boton_consultar(self, page):
+        """Devuelve el botón «Consultar» del formulario de comprobantes.
+
+        Se prueba primero el id de PrimeFaces y, si no está, el texto del <span>
+        interno, que es lo único estable cuando el portal renumera los ids.
+        """
+        for selector in (Selectors.BTN_CONSULTAR, *Selectors.BTN_CONSULTAR_ALT):
+            loc = page.locator(selector)
+            if loc.count():
+                return loc.first
+        raise ElementoNoEncontrado(
+            "No se encontró el botón «Consultar» en el formulario de "
+            "comprobantes. Es posible que el portal haya cambiado."
+        )
+
     def _consultar(self, page, tipo_codigo: str) -> bool:
         """Aplica filtros y pulsa Consultar, renovando el token ante el reCAPTCHA.
 
@@ -540,9 +730,10 @@ class SRIDownloader:
 
             self._seleccionar_filtros(page, tipo_codigo)
             self._comportamiento_humano(page)
-            page.locator(Selectors.BTN_CONSULTAR).hover()
+            boton = self._boton_consultar(page)
+            boton.hover()
             page.wait_for_timeout(random.randint(500, 900))
-            page.click(Selectors.BTN_CONSULTAR)
+            boton.click()
             page.wait_for_timeout(6000)
 
             if page.locator(Selectors.CAPTCHA_ERROR).count() == 0:
@@ -559,8 +750,13 @@ class SRIDownloader:
             return 0
 
         descargados = 0
+        omitidos = 0
         for i in range(total):
             self._check_stop()
+            if page.is_closed():
+                raise NavegadorCerrado(
+                    f"El navegador se cerró antes de la fila {i + 1} de {total}."
+                )
             enlace = page.locator(Selectors.XML_LINKS).nth(i)
             try:
                 with page.expect_download(timeout=self.cfg.nav_timeout_ms) as dl_info:
@@ -572,6 +768,7 @@ class SRIDownloader:
 
                 # Renombrar por clave de acceso (única y significativa).
                 nombre_final = sugerido
+                clave = None
                 try:
                     with open(tmp, "r", encoding="utf-8", errors="ignore") as fh:
                         clave = extraer_clave_acceso(fh.read())
@@ -579,13 +776,36 @@ class SRIDownloader:
                         nombre_final = f"{clave}.xml"
                 except Exception:
                     pass
-                destino_final = ruta_unica(destino, nombre_final)
-                os.replace(tmp, destino_final)
 
-                descargados += 1
-                self.log(f"    ✓ {os.path.basename(destino_final)}")
+                # Con la clave de acceso el nombre es único por comprobante, así
+                # que si ya está en la carpeta es el mismo XML: se descarta la
+                # copia en vez de crear un duplicado. Esto hace que reanudar una
+                # descarga interrumpida no infle el análisis posterior.
+                ya_existente = os.path.join(destino, nombre_final)
+                if clave and os.path.exists(ya_existente):
+                    os.remove(tmp)
+                    omitidos += 1
+                else:
+                    destino_final = ruta_unica(destino, nombre_final)
+                    os.replace(tmp, destino_final)
+                    descargados += 1
+                    self.log(f"    ✓ {os.path.basename(destino_final)}")
+
+                # Respiro entre descargas: no evita el segfault de Chrome (que es
+                # periódico, no por volumen), pero hace el recorrido menos
+                # mecánico de cara al reCAPTCHA.
+                page.wait_for_timeout(random.randint(150, 400))
             except Exception as e:  # noqa: BLE001
+                # Si el navegador murió, las demás filas fallarían igual: se
+                # aborta en vez de repetir el mismo error una vez por fila.
+                if es_error_navegador_cerrado(str(e)):
+                    raise NavegadorCerrado(
+                        f"El navegador se cerró en la fila {i + 1} de {total}."
+                    ) from e
                 self.log(f"    ⚠ Error al descargar fila {i + 1}: {e}")
+
+        if omitidos:
+            self.log(f"    ↷ {omitidos} comprobante(s) ya estaban descargados.")
         return descargados
 
     def _firma_pagina(self, page) -> str:
@@ -745,6 +965,15 @@ class SRIDownloader:
                 self.log(f"✖ {e}")
                 resultado.errores.append(str(e))
                 return resultado
+            except NavegadorCerrado as e:
+                msg = (
+                    f"{e} Se conservan los {resultado.total_descargados} "
+                    "archivo(s) ya descargados; vuelva a ejecutar la descarga "
+                    "para obtener el resto."
+                )
+                self.log(f"✖ {msg}")
+                resultado.errores.append(msg)
+                return resultado
             except Exception as e:  # noqa: BLE001
                 self.log(f"✖ Error inesperado: {e}")
                 resultado.errores.append(str(e))
@@ -758,15 +987,20 @@ class SRIDownloader:
                     pass
 
     def _lanzar_contexto(self, p):
-        """Lanza Chrome real con perfil persistente (necesario para reCAPTCHA)."""
+        """Lanza el navegador con perfil persistente (necesario para reCAPTCHA)."""
         comun = dict(
             user_data_dir=PERFIL_DIR,
             headless=self.cfg.headless,
-            args=["--disable-blink-features=AutomationControlled"],
+            args=ARGS_NAVEGADOR,
             ignore_default_args=["--enable-automation"],
             accept_downloads=True,
             no_viewport=True,
         )
+
+        if self.cfg.usar_chromium:
+            self.log("  Usando Chromium (el reCAPTCHA puede exigir más reintentos).")
+            return p.chromium.launch_persistent_context(**comun)
+
         try:
             return p.chromium.launch_persistent_context(channel="chrome", **comun)
         except Exception:

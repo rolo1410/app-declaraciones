@@ -1,6 +1,6 @@
 # Comprobantes SRI — Descarga, Análisis y Declaración de IVA (Ecuador)
 
-Aplicación de escritorio (macOS y Windows) que integra en **una sola app con tres
+Aplicación de escritorio (Windows, Linux y macOS) que integra en **una sola app con tres
 pestañas** todo el flujo de la declaración de IVA en SRI en línea (sucesor del
 Formulario 104):
 
@@ -24,23 +24,33 @@ sin salir de la aplicación ni manipular archivos intermedios.
 
 Los ejecutables se compilan automáticamente con GitHub Actions:
 
-- **Releases (recomendado):** <https://github.com/rolo1410/app-declaraciones/releases/latest>
-  — `ComprobantesSRI-windows.zip` y `ComprobantesSRI-macOS.zip`. Se publica una
-  versión nueva cada vez que se crea una etiqueta `v*` (ej. `v2.0.0`).
+- **Release «latest» (recomendado):** <https://github.com/rolo1410/app-declaraciones/releases/latest>
+  — `ComprobantesSRI-windows.zip` y `ComprobantesSRI-linux.tar.gz`. Se actualiza
+  automáticamente en **cada merge a `main`**; no hace falta crear etiquetas.
 - **Artifacts de una compilación puntual:** pestaña **Actions** → ejecución más
   reciente del workflow «Compilar ejecutables» → sección **Artifacts**.
 
-Cada `.zip` es una carpeta *onedir*: descomprima **toda** la carpeta y ejecute el
-binario que está dentro (en Windows, `ComprobantesSRI.exe`).
+Cada paquete es una carpeta *onedir*: extráigala **completa** y ejecute el
+binario que está dentro.
+
+```bash
+# Windows (PowerShell)
+Expand-Archive ComprobantesSRI-windows.zip -DestinationPath .
+.\ComprobantesSRI\ComprobantesSRI.exe
+
+# Linux
+tar -xzf ComprobantesSRI-linux.tar.gz
+./ComprobantesSRI/ComprobantesSRI
+```
 
 > **Requisito en la máquina destino:** tener **Google Chrome** instalado (la
 > pestaña Descarga usa el Chrome del sistema para superar el reCAPTCHA).
+> En Linux hace falta además Tcl/Tk (`sudo apt install python3-tk` en Debian/Ubuntu
+> si la ventana no abre).
 
-Para publicar una versión nueva en Releases:
-
-```bash
-git tag v2.0.0 && git push origin v2.0.0
-```
+> **macOS:** no se publica ejecutable. El proyecto corre igual en macOS, pero el
+> `.app` requiere firma y notarización de Apple para distribuirse sin que
+> Gatekeeper lo bloquee. Compílelo localmente con `./build.sh`.
 
 ## Requisitos (desarrollo)
 
@@ -58,8 +68,29 @@ python -m playwright install chromium   # respaldo; se prefiere Chrome real
 ## Uso — interfaz gráfica
 
 ```bash
-python -m app.main
+./run.sh            # entorno virtual del proyecto + variables de .env
+python -m app.main  # equivalente, si ya activó el venv
 ```
+
+> `run.sh` usa `.venv/bin/python`: Playwright está instalado ahí, no en el
+> Python del sistema. Con otro intérprete la descarga falla con
+> `No module named 'playwright'`.
+
+### Valores por defecto (opcional)
+Copie `.env.example` a `.env` y complete las variables para que la pestaña
+**Descarga** se autocomplete al abrir. La app lee el `.env` por su cuenta, así
+que funciona igual con `./run.sh`, con `python -m app.main` o con el ejecutable
+empaquetado. `.env` está en `.gitignore`: las credenciales no se versionan.
+
+Se busca en el directorio actual, luego en la raíz del proyecto y, en el
+ejecutable, junto al binario. Una variable exportada en la terminal tiene
+prioridad sobre el archivo.
+
+| Variable | Campo que rellena |
+|---|---|
+| `SRI_RUC` | RUC / C.I. / Pasaporte |
+| `SRI_CLAVE` | Clave |
+| `SRI_DIR` | Directorio de descarga |
 
 ### 1 · Descarga
 Ingrese RUC/cédula y clave, seleccione año/mes/día y los tipos de comprobante,
@@ -87,7 +118,7 @@ También puede alimentar la declaración con un **archivo TXT de «Recibidos»**
 ## Uso — línea de comandos (declaración desde TXT)
 
 ```bash
-python -m app.main 0603545351001_Recibidos.txt --periodo 2026-06 --ventas 5586.96
+python -m app.main 9999999999001_Recibidos.txt --periodo 2026-06 --ventas 5586.96
 python -m app.main archivo.txt --todas-con-credito     # todas las compras con crédito
 ```
 
@@ -117,8 +148,13 @@ el driver de Playwright y los `assets/`, pero no los navegadores):
 Diagnóstico incluido: `ComprobantesSRI --selftest` verifica que Playwright puede
 lanzar Chrome y escribe el resultado en `<temp>/sri_selftest.log` (código 0 = OK).
 
-En la nube, `.github/workflows/build.yml` compila Windows y macOS y publica los
-`.zip` en **Releases** al etiquetar `vX.Y.Z`.
+En la nube, `.github/workflows/build.yml` corre las pruebas, compila **Windows**
+(`windows-latest`) y **Linux** (`ubuntu-22.04`) y publica los paquetes en el
+Release **`latest`** en cada merge a `main`. macOS no se compila en CI: el `.app`
+necesita firma/notarización de Apple para poder distribuirse.
+
+En local, `./build.sh` compila para el sistema donde se ejecuta (en macOS genera
+`dist/ComprobantesSRI.app`).
 
 ## Estructura del proyecto
 

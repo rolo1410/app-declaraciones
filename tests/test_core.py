@@ -174,6 +174,20 @@ class TestVentas(unittest.TestCase):
         self.assertEqual(ventas.c411, Decimal("900"))
         self.assertEqual(ventas.c421, Decimal("135.00"))
 
+    def test_ventas_tarifa_cero(self):
+        ventas = calculadora.calcular_ventas(
+            Decimal("2086.96"),
+            ventas_tarifa_cero=Decimal("197.71"),
+            ventas_tarifa_cero_con_credito=Decimal("10"),
+        )
+        self.assertEqual(ventas.c403, Decimal("197.71"))
+        self.assertEqual(ventas.c413, Decimal("197.71"))
+        self.assertEqual(ventas.c405, Decimal("10"))
+        self.assertEqual(ventas.c415, Decimal("10"))
+        self.assertEqual(ventas.c409, Decimal("2294.67"))
+        self.assertEqual(ventas.c419, Decimal("2294.67"))
+        self.assertEqual(ventas.c421, Decimal("313.04"))  # solo la parte gravada
+
 
 if __name__ == "__main__":
     unittest.main()
