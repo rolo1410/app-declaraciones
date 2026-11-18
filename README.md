@@ -25,13 +25,29 @@ en el SRI → enviar al cliente → cobrar**, sin manipular archivos intermedios
 Los ejecutables se compilan automáticamente con GitHub Actions:
 
 - **Release «latest» (recomendado):** <https://github.com/rolo1410/app-declaraciones/releases/latest>
-  — `ComprobantesSRI-windows.zip` y `ComprobantesSRI-linux.tar.gz`. Se actualiza
-  automáticamente en **cada merge a `main`**; no hace falta crear etiquetas.
+  — `ComprobantesSRI-Setup.exe`, `ComprobantesSRI-windows.zip` y
+  `ComprobantesSRI-linux.tar.gz`. Se actualiza automáticamente en **cada merge
+  a `main`**; no hace falta crear etiquetas.
 - **Artifacts de una compilación puntual:** pestaña **Actions** → ejecución más
   reciente del workflow «Compilar ejecutables» → sección **Artifacts**.
 
+### Windows: instalador (recomendado)
+
+Descargue `ComprobantesSRI-Setup.exe`, ábralo y pulse «Siguiente». Se instala
+para el usuario actual (no pide administrador), crea el acceso en el menú Inicio
+y, si se marca, en el escritorio. Para actualizar, ejecute el instalador nuevo
+encima; los datos (`%LOCALAPPDATA%\ComprobantesSRI`) se conservan, también al
+desinstalar. Como el ejecutable no está firmado, SmartScreen puede mostrar
+«Windows protegió su PC»: «Más información» → «Ejecutar de todas formas».
+
+El instalador se genera con Inno Setup a partir de `instalador/ComprobantesSRI.iss`.
+
+### Versión portable (zip / tar.gz)
+
 Cada paquete es una carpeta *onedir*: extráigala **completa** y ejecute el
-binario que está dentro.
+binario que está dentro. En Windows **no** abra el `.exe` desde dentro del zip
+(doble clic en el Explorador): falla con «Failed to load Python DLL» porque
+Windows no copia la carpeta `_internal`. Use antes «Extraer todo».
 
 ```bash
 # Windows (PowerShell)
