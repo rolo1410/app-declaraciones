@@ -237,3 +237,22 @@ def test_contrasena_rechazada_da_mensaje_claro_sin_la_clave(monkeypatch):
         correo.probar(_servidor(), "mala-clave-secreta")
     assert "contraseña de aplicación" in str(e.value)
     assert "mala-clave-secreta" not in str(e.value)
+
+
+def test_servidor_sin_autenticacion_no_inicia_sesion(monkeypatch):
+    """Mailpit y otros servidores locales: sin contraseña no se llama a login."""
+    _SMTPFalso.instancias.clear()
+    monkeypatch.setattr(correo.smtplib, "SMTP", _SMTPFalso)
+    servidor = perfil.ServidorCorreo("localhost", 1025, "ninguna", "ana@estudio.ec",
+                                     autenticar=False)
+    msg = correo.construir(servidor, ["juan@cliente.ec"], "A", "B")
+    assert correo.enviar(servidor, "", msg) == []
+    assert _SMTPFalso.instancias[-1].login_con is None
+
+
+def test_faltantes_nombra_los_campos():
+    s = perfil.ServidorCorreo("localhost", 1026, "ninguna", "", "rolo@gmail.com")
+    assert s.faltantes() == ["Correo de la cuenta"] and not s.configurado
+    p = perfil.Perfil(correo=s)
+    with pytest.raises(ValueError, match="Correo de la cuenta"):
+        perfil.guardar(p)

@@ -22,12 +22,13 @@ MAX_LOGO = 2 * 1024 * 1024  # 2 MB
 
 SEGURIDADES = ("ssl", "starttls", "ninguna")
 
-# Ajustes conocidos: (servidor, puerto, seguridad)
-PROVEEDORES: dict[str, tuple[str, int, str]] = {
-    "Gmail / Google Workspace": ("smtp.gmail.com", 465, "ssl"),
-    "Outlook / Microsoft 365": ("smtp.office365.com", 587, "starttls"),
-    "Yahoo": ("smtp.mail.yahoo.com", 465, "ssl"),
-    "Zoho": ("smtp.zoho.com", 465, "ssl"),
+# Ajustes conocidos: (servidor, puerto, seguridad, pide contraseña)
+PROVEEDORES: dict[str, tuple[str, int, str, bool]] = {
+    "Gmail / Google Workspace": ("smtp.gmail.com", 465, "ssl", True),
+    "Outlook / Microsoft 365": ("smtp.office365.com", 587, "starttls", True),
+    "Yahoo": ("smtp.mail.yahoo.com", 465, "ssl", True),
+    "Zoho": ("smtp.zoho.com", 465, "ssl", True),
+    "Servidor local de pruebas (Mailpit)": ("localhost", 1025, "ninguna", False),
 }
 
 
@@ -68,10 +69,22 @@ class ServidorCorreo:
     usuario: str = ""             # cuenta con la que se inicia sesión (suele ser el correo)
     remitente: str = ""           # nombre visible del remitente
     copia_a_mi: bool = True       # enviarse una copia oculta (CCO)
+    autenticar: bool = True       # el servidor pide usuario y contraseña
+
+    def faltantes(self) -> list[str]:
+        """Campos obligatorios vacíos (nombres como se ven en Configuración)."""
+        faltan = []
+        if not self.servidor.strip():
+            faltan.append("Servidor")
+        if not self.puerto:
+            faltan.append("Puerto")
+        if not self.usuario.strip():
+            faltan.append("Correo de la cuenta")
+        return faltan
 
     @property
     def configurado(self) -> bool:
-        return bool(self.servidor.strip() and self.usuario.strip() and self.puerto)
+        return not self.faltantes()
 
 
 @dataclass
@@ -134,7 +147,11 @@ def validar(perfil: Perfil) -> list[str]:
         errores.append("Seguridad del correo no válida.")
     if not (0 < int(c.puerto or 0) < 65536):
         errores.append("El puerto debe estar entre 1 y 65535.")
-    for etiqueta, valor in (("Su correo", perfil.declarante.correo),):
+    if c.servidor.strip() and not c.usuario.strip():
+        errores.append("Correo de la cuenta: escriba el correo con el que se envían los "
+                       "informes (el «Nombre visible» es solo el nombre que ve el cliente).")
+    for etiqueta, valor in (("Su correo", perfil.declarante.correo),
+                            ("Correo de la cuenta", c.usuario)):
         valor = valor.strip()
         if valor and ("@" not in valor or " " in valor):
             errores.append(f"{etiqueta}: «{valor}» no parece una dirección de correo.")

@@ -113,8 +113,17 @@ class PestanaConfiguracion(ttk.Frame):
         ttk.Combobox(fila, textvariable=self.var_seguridad, state="readonly", width=11,
                      values=list(SEGURIDAD_TEXTO.values())).pack(side="left")
 
-        self._campo(c, 4, "usuario", "Usuario (correo)")
-        self.ent_clave = self._campo(c, 5, "clave", "Contraseña", show="•")
+        self._campo(c, 4, "usuario", "Correo de la cuenta *")
+        self.var_autenticar = tk.BooleanVar(value=True)
+        fila_clave = ttk.Frame(c)
+        ttk.Label(c, text="Contraseña").grid(row=5, column=0, sticky="w", pady=3)
+        fila_clave.grid(row=5, column=1, sticky="we", padx=(8, 0), pady=3)
+        fila_clave.columnconfigure(0, weight=1)
+        self._vars["clave"] = tk.StringVar()
+        self.ent_clave = ttk.Entry(fila_clave, textvariable=self._vars["clave"], show="•")
+        self.ent_clave.grid(row=0, column=0, sticky="we")
+        ttk.Checkbutton(fila_clave, text="El servidor la pide", variable=self.var_autenticar,
+                        command=self._ver_autenticar).grid(row=0, column=1, padx=(8, 0))
         estado = ttk.Frame(c)
         estado.grid(row=6, column=1, sticky="we", padx=(8, 0))
         self.lbl_clave = ttk.Label(estado, text="", foreground=GRIS)
@@ -128,8 +137,8 @@ class PestanaConfiguracion(ttk.Frame):
                        "Se guarda cifrada y no se vuelve a mostrar.")).grid(
             row=7, column=1, sticky="we", padx=(8, 0), pady=(2, 6))
 
-        self._campo(c, 8, "remitente", "Nombre del remitente",
-                    ayuda="Lo que ve el cliente como remitente. Vacío: su correo.")
+        self._campo(c, 8, "remitente", "Nombre visible",
+                    ayuda="Opcional: cómo ve el cliente al remitente, p. ej. «Ana Pérez CPA».")
         self.var_copia = tk.BooleanVar(value=True)
         ttk.Checkbutton(c, text="Enviarme una copia oculta de cada envío",
                         variable=self.var_copia).grid(row=10, column=1, sticky="w",
@@ -248,8 +257,11 @@ class PestanaConfiguracion(ttk.Frame):
             self._vars[clave].set(valor)
         self.var_seguridad.set(SEGURIDAD_TEXTO.get(c.seguridad, "SSL/TLS"))
         self.var_copia.set(c.copia_a_mi)
-        proveedor = next((n for n, (s, p, seg) in perfil.PROVEEDORES.items()
-                          if (s, p, seg) == (c.servidor, c.puerto, c.seguridad)), OTRO_PROVEEDOR)
+        self.var_autenticar.set(c.autenticar)
+        self._ver_autenticar()
+        proveedor = next((n for n, (s, p, seg, aut) in perfil.PROVEEDORES.items()
+                          if (s, p, seg, aut) == (c.servidor, c.puerto, c.seguridad, c.autenticar)),
+                         OTRO_PROVEEDOR)
         self.var_proveedor.set(proveedor)
         self._mostrar_logo()
         self._mostrar_estado_clave()
@@ -268,7 +280,8 @@ class PestanaConfiguracion(ttk.Frame):
                               v["correo_declarante"], v["telefono"], v["direccion"],
                               self.perfil.declarante.logo),
             perfil.ServidorCorreo(v["servidor"], puerto, seguridad, v["usuario"],
-                                  v["remitente"], self.var_copia.get()),
+                                  v["remitente"], self.var_copia.get(),
+                                  self.var_autenticar.get()),
         )
 
     def guardar(self) -> bool:
@@ -319,10 +332,16 @@ class PestanaConfiguracion(ttk.Frame):
         datos = perfil.PROVEEDORES.get(self.var_proveedor.get())
         if not datos:
             return
-        servidor, puerto, seguridad = datos
+        servidor, puerto, seguridad, autenticar = datos
         self._vars["servidor"].set(servidor)
         self._vars["puerto"].set(str(puerto))
         self.var_seguridad.set(SEGURIDAD_TEXTO[seguridad])
+        self.var_autenticar.set(autenticar)
+        self._ver_autenticar()
+
+    def _ver_autenticar(self) -> None:
+        """Sin autenticación (p. ej. Mailpit) la contraseña no se usa."""
+        self.ent_clave.state(["!disabled"] if self.var_autenticar.get() else ["disabled"])
 
     # ------------------------------------------------------------------- logo
     def _mostrar_logo(self) -> None:
@@ -376,11 +395,11 @@ class PestanaConfiguracion(ttk.Frame):
             return
         servidor = self._leer().correo
         if not servidor.configurado:
-            self.lbl_prueba.configure(text="Complete servidor, puerto y usuario.",
+            self.lbl_prueba.configure(text="Falta: " + ", ".join(servidor.faltantes()) + ".",
                                       foreground=ROJO)
             return
-        clave = self._vars["clave"].get()
-        if not clave:
+        clave = self._vars["clave"].get() if servidor.autenticar else ""
+        if servidor.autenticar and not clave:
             try:
                 clave = self.registro.clave_smtp()
             except (clientes.ErrorClientes, cifrado.ErrorCifrado) as e:
@@ -408,8 +427,9 @@ class PestanaConfiguracion(ttk.Frame):
             self._probando = False
             self.btn_probar.configure(state="normal")
             if resultado.get("ok"):
-                self.lbl_prueba.configure(text="✓ Conexión e inicio de sesión correctos.",
-                                          foreground=VERDE)
+                texto = ("✓ Conexión e inicio de sesión correctos." if servidor.autenticar
+                         else "✓ Conexión correcta (sin contraseña).")
+                self.lbl_prueba.configure(text=texto, foreground=VERDE)
             else:
                 self.lbl_prueba.configure(text=resultado.get("error", "Falló la prueba."),
                                           foreground=ROJO)

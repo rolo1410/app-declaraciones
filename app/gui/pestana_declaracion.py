@@ -898,7 +898,7 @@ class PestanaDeclaracion(ttk.Frame):
             hay_clave = registro.tiene_clave_smtp()
         except Exception:  # noqa: BLE001
             hay_clave = False
-        if not ajustes.correo.configurado or not hay_clave:
+        if not ajustes.correo.configurado or (ajustes.correo.autenticar and not hay_clave):
             self._faltan_ajustes("Falta configurar la cuenta de correo de envío "
                                  "(servidor, usuario y contraseña).")
             return
@@ -956,11 +956,13 @@ class PestanaDeclaracion(ttk.Frame):
             TITULO, f"Los adjuntos pesan {paquete.tamano / 1048576:.1f} MB y muchos servidores "
                     "rechazan correos de más de 20 MB.\n\n¿Enviar de todas formas?"):
             return
-        try:
-            clave = registro.clave_smtp()
-        except Exception as e:  # noqa: BLE001
-            messagebox.showerror(TITULO, str(e))
-            return
+        clave = ""
+        if ajustes.correo.autenticar:
+            try:
+                clave = registro.clave_smtp()
+            except Exception as e:  # noqa: BLE001
+                messagebox.showerror(TITULO, str(e))
+                return
         self._enviar_en_segundo_plano(ajustes, clave, datos, paquete,
                                       cliente.id, declaracion.periodo)
 

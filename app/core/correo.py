@@ -62,7 +62,8 @@ def _conectar(servidor: ServidorCorreo, clave: str) -> smtplib.SMTP:
             smtp = smtplib.SMTP(host, puerto, timeout=TIEMPO_ESPERA)
             if servidor.seguridad == "starttls":
                 smtp.starttls(context=contexto)
-        smtp.login(servidor.usuario.strip(), clave)
+        if servidor.autenticar:
+            smtp.login(servidor.usuario.strip(), clave)
         return smtp
     except smtplib.SMTPAuthenticationError:
         raise ErrorCorreo(

@@ -200,8 +200,10 @@ de los archivos y la importación del `.env`.
 
 - **Quien prepara la declaración:** nombre o estudio, cédula/RUC, cargo,
   n.º de registro, contacto y logo. Van al pie del PDF y a la firma del correo.
-- **Correo de envío (SMTP):** proveedor (Gmail, Outlook, Yahoo, Zoho u otro),
-  usuario y contraseña. Gmail y Outlook exigen una *contraseña de aplicación*.
+- **Correo de envío (SMTP):** proveedor (Gmail, Outlook, Yahoo, Zoho, servidor
+  local de pruebas u otro), **correo de la cuenta** y contraseña. Para un
+  servidor sin contraseña (p. ej. Mailpit en `localhost`) desmarque «El
+  servidor la pide». Gmail y Outlook exigen una *contraseña de aplicación*.
   La contraseña se guarda cifrada con la llave maestra (como las claves del
   SRI) y no se vuelve a mostrar. «Probar conexión» inicia sesión sin enviar nada.
 - **Archivos y seguridad:** ruta base de los archivos, estado de la llave
