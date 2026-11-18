@@ -61,6 +61,8 @@ class PestanaDeclaracion(ttk.Frame):
             foreground="gray")
         self.etiqueta_origen.pack(side="left", padx=12)
 
+        self._construir_franja()
+
         cuaderno = ttk.Notebook(self)
         cuaderno.pack(fill="both", expand=True)
         self.pestania_comprobantes = ttk.Frame(cuaderno, padding=8)
@@ -71,6 +73,57 @@ class PestanaDeclaracion(ttk.Frame):
 
         self._construir_pestania_comprobantes()
         self._construir_pestania_formulario()
+
+    def _construir_franja(self) -> None:
+        """Resultado de la declaración, siempre visible y al día (se recalcula solo)."""
+        familia = font.nametofont("TkDefaultFont").actual("family")
+        tamano = font.nametofont("TkDefaultFont").actual("size")
+        franja = ttk.Frame(self, padding=(2, 2, 2, 8))
+        franja.pack(fill="x")
+        self.lbl_resultado = ttk.Label(franja, text="", font=(familia, tamano + 4, "bold"))
+        self.lbl_resultado.pack(side="left")
+        self.lbl_detalle_resultado = ttk.Label(franja, text="", foreground="gray")
+        self.lbl_detalle_resultado.pack(side="left", padx=(14, 0))
+        self.btn_ver_formulario = ttk.Button(
+            franja, text="Ver formulario ▸",
+            command=lambda: self.cuaderno.select(self.pestania_formulario))
+        self.btn_ver_formulario.pack(side="right")
+        self._id_calculo = None
+        self._mostrar_franja()
+
+    def _mostrar_franja(self, error: str = "") -> None:
+        if error:
+            self.lbl_resultado.configure(text="Revise los valores de ventas", foreground="#c0392b")
+            self.lbl_detalle_resultado.configure(text=error)
+            self.btn_ver_formulario.state(["disabled"])
+            return
+        d = self.declaracion
+        if d is None:
+            self.lbl_resultado.configure(text="Sin calcular", foreground="gray")
+            self.lbl_detalle_resultado.configure(
+                text="Se calcula sola al cargar los comprobantes del mes.")
+            self.btn_ver_formulario.state(["disabled"])
+            return
+        r = d.resumen
+        if r.impuesto_a_pagar > 0:
+            texto = f"Impuesto a pagar  $ {r.impuesto_a_pagar:,.2f}"
+        else:
+            texto = f"Crédito a favor  $ {r.credito_a_favor:,.2f}"
+        self.lbl_resultado.configure(text=texto, foreground="")
+        self.lbl_detalle_resultado.configure(
+            text=f"{d.periodo} · generado (499) $ {r.impuesto_generado:,.2f} · "
+                 f"crédito tributario (564) $ {r.credito_tributario:,.2f}")
+        self.btn_ver_formulario.state(["!disabled"])
+
+    def _programar_calculo(self) -> None:
+        """Recalcula un instante después del último cambio (compras o ventas)."""
+        if self._id_calculo is not None:
+            self.after_cancel(self._id_calculo)
+        self._id_calculo = self.after(350, self._calcular_automatico)
+
+    def _calcular_automatico(self) -> None:
+        self._id_calculo = None
+        self.calcular(automatico=True)
 
     def _construir_pestania_comprobantes(self) -> None:
         marco = self.pestania_comprobantes
@@ -144,11 +197,9 @@ class PestanaDeclaracion(ttk.Frame):
         panel = ttk.Frame(marco, padding=(12, 0, 0, 0))
         panel.pack(side="left", fill="y")
 
-        # Acción principal anclada al pie: siempre visible aunque la ventana sea baja.
+        # El formulario se recalcula solo: no hace falta un botón «Calcular».
         self.etiqueta_totales = ttk.Label(panel, text="", justify="left")
-        self.etiqueta_totales.pack(side="bottom", anchor="w")
-        ttk.Button(panel, text="Calcular declaración ▸", default="active",
-                   command=self.calcular).pack(side="bottom", fill="x", pady=(10, 6))
+        self.etiqueta_totales.pack(side="bottom", anchor="w", pady=(10, 0))
 
         acciones = ttk.LabelFrame(panel, text="Clasificación de compras", padding=8)
         acciones.pack(fill="x", pady=(0, 10))
@@ -178,8 +229,10 @@ class PestanaDeclaracion(ttk.Frame):
         ]
         for fila, (clave, etiqueta, inicial) in enumerate(campos):
             ttk.Label(ventas, text=etiqueta).grid(row=fila, column=0, sticky="w", pady=3)
-            entrada = ttk.Entry(ventas, width=10, justify="right")
-            entrada.insert(0, inicial)
+            var = tk.StringVar(value=inicial)
+            entrada = ttk.Entry(ventas, width=10, justify="right", textvariable=var)
+            entrada._var = var  # que no la libere el recolector
+            var.trace_add("write", lambda *_: self._programar_calculo())
             entrada.grid(row=fila, column=1, sticky="e", padx=(8, 0), pady=3)
             self.entradas[clave] = entrada
 
@@ -663,6 +716,17 @@ class PestanaDeclaracion(ttk.Frame):
         self.etiqueta_totales.configure(
             text=f"IVA con crédito: {con:,.2f}\nIVA sin crédito: {sin:,.2f}"
         )
+        self._programar_calculo()
+
+    def _leer_entero(self, clave: str, etiqueta: str) -> int:
+        texto = self.entradas[clave].get().strip() or "0"
+        try:
+            valor = int(texto)
+        except ValueError:
+            raise ValueError(f"{etiqueta}: escriba un número entero (no «{texto}»).") from None
+        if valor < 0:
+            raise ValueError(f"{etiqueta}: no puede ser negativo.")
+        return valor
 
     def _leer_decimal(self, clave: str, etiqueta: str) -> Decimal:
         texto = self.entradas[clave].get().strip().replace(",", ".") or "0"
@@ -671,9 +735,13 @@ class PestanaDeclaracion(ttk.Frame):
         except InvalidOperation as error:
             raise ValueError(f"Valor inválido en «{etiqueta}»: {texto}") from error
 
-    def calcular(self) -> None:
-        if not self.comprobantes:
-            messagebox.showinfo(TITULO, "Primero cargue los XML descargados del mes o un TXT.")
+    def calcular(self, automatico: bool = False) -> None:
+        """Calcula el formulario. ``automatico``: sin avisos ni cambio de pestaña."""
+        if not self.comprobantes or not self.combo_periodo.get():
+            self.declaracion = None
+            if not automatico:
+                messagebox.showinfo(TITULO, "Primero cargue los XML descargados del mes o un TXT.")
+            self._mostrar_franja()
             return
         try:
             ventas = self._leer_decimal("ventas", "Ventas brutas IVA ≠0%")
@@ -682,10 +750,14 @@ class PestanaDeclaracion(ttk.Frame):
                 "ventas_cero_credito", "Ventas brutas IVA 0% con crédito")
             notas = self._leer_decimal("notas_credito", "Notas de crédito")
             c483 = self._leer_decimal("c483", "Impuesto meses anteriores")
-            emitidos = int(self.entradas["emitidos"].get() or 0)
-            anulados = int(self.entradas["anulados"].get() or 0)
+            emitidos = self._leer_entero("emitidos", "Comprobantes emitidos (111)")
+            anulados = self._leer_entero("anulados", "Comprobantes anulados (113)")
         except ValueError as error:
-            messagebox.showerror(TITULO, str(error))
+            self.declaracion = None  # no enviar ni exportar un cálculo desactualizado
+            if automatico:
+                self._mostrar_franja(error=str(error))
+            else:
+                messagebox.showerror(TITULO, str(error))
             return
 
         self.declaracion = calculadora.calcular_declaracion(
@@ -701,7 +773,9 @@ class PestanaDeclaracion(ttk.Frame):
             ventas_tarifa_cero_con_credito=ventas_cero_credito,
         )
         self._mostrar_formulario()
-        self.cuaderno.select(self.pestania_formulario)
+        if not automatico:
+            self.cuaderno.select(self.pestania_formulario)
+        self._mostrar_franja()
         self._guardar_resumen_del_mes()
 
     def _cliente_del_trabajo(self):

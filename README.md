@@ -176,8 +176,10 @@ terminar, la app pasa a **Declaración** con esos XML ya cargados.
   personal).
 - Ingrese las ventas brutas (campo 401 prellenado por el SRI) y los contadores
   de comprobantes emitidos.
-- **Calcular declaración** muestra cada casillero con su valor y el resumen
-  (impuesto a pagar o crédito a favor).
+- El formulario **se calcula solo** al cargar los comprobantes y cada vez que
+  cambia el crédito de una compra o un valor de ventas. Arriba se ve siempre el
+  resultado (impuesto a pagar o crédito a favor); «Ver formulario ▸» muestra
+  cada casillero.
 - **Exportar** a Excel o PDF.
 - **Enviar al cliente por correo…** arma el informe y lo envía desde su cuenta
   (ver «Configuración»). Puede editar destinatarios, asunto y mensaje, y elegir
