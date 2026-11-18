@@ -263,6 +263,7 @@ app/
     pestana_declaracion.py Pestaña 3 · Declaración (incluye el envío por correo)
     pestana_configuracion.py Pestaña Configuración
     menu_principal.py     Barra de menús (Clientes, Ir, Ventana)
+    barra_lateral.py      Navegación lateral (pasos del mes, Clientes, Configuración)
     recursos.py           Utilidades de recursos e imágenes
   export/                 Reportes Excel (openpyxl) y PDF (reportlab)
 tests/                    Pruebas unitarias (pytest)

@@ -1,6 +1,7 @@
-"""Ventana principal: menú, selector de cliente y cinco pestañas.
+"""Ventana principal: menú, barra lateral (cliente + navegación) y páginas.
 
-    Clientes  ·  Descarga  →  Análisis  →  Declaración  ·  Configuración
+    Trabajo del mes: 1 Descarga → 2 Análisis → 3 Declaración
+    Gestión: Clientes                       (abajo) Configuración
 
 Flujo: descargar los XML del SRI, analizarlos y enviarlos a la declaración para
 calcular los casilleros del formulario de IVA.
@@ -21,6 +22,7 @@ from .pestana_configuracion import PestanaConfiguracion
 from .pestana_declaracion import PestanaDeclaracion
 from .pestana_descarga import PestanaDescarga
 from .recursos import poner_icono
+from .barra_lateral import Navegacion, Pagina
 from .selector_cliente import SelectorCliente
 
 TITULO = "Comprobantes SRI — Descarga, Análisis y Declaración de IVA"
@@ -34,16 +36,28 @@ class App(tk.Tk):
         self.minsize(980, 640)
         poner_icono(self)
 
-        # Cliente activo compartido por todas las pestañas.
+        # Cliente activo compartido por todas las páginas.
         self.contexto = ContextoCliente(self)
-        SelectorCliente(self, self.contexto, on_gestionar=self._ir_a_clientes).pack(fill="x")
-
-        notebook = ttk.Notebook(self)
-        notebook.pack(fill="both", expand=True, padx=6, pady=(0, 6))
-        self.notebook = notebook
-
-        # Las pestañas se crean en orden de flujo y se enlazan entre sí.
         ctx = self.contexto
+
+        # Barra lateral (cliente + navegación) | contenido (título + página).
+        lateral = tk.Frame(self)
+        lateral.pack(side="left", fill="y")
+        lateral.pack_propagate(False)
+        SelectorCliente(lateral, ctx, vertical=True).pack(fill="x", padx=14, pady=(14, 4))
+        separador = tk.Frame(self, width=1)
+        separador.pack(side="left", fill="y")
+        contenido = ttk.Frame(self)
+        contenido.pack(side="left", fill="both", expand=True)
+        encabezado = ttk.Frame(contenido, padding=(18, 14, 18, 6))
+        encabezado.pack(fill="x")
+        notebook = ttk.Notebook(contenido)
+        notebook.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.notebook = notebook
+        self.navegacion = nav = Navegacion(self, notebook, lateral, encabezado)
+        separador.configure(background=nav.colores["linea"])
+
+        # Las páginas se crean en orden de flujo y se enlazan entre sí.
         self.pestana_clientes = PestanaClientes(notebook, ctx)
         self.pestana_configuracion = PestanaConfiguracion(notebook, ctx)
         self.pestana_declaracion = PestanaDeclaracion(
@@ -53,11 +67,20 @@ class App(tk.Tk):
         self.pestana_descarga = PestanaDescarga(
             notebook, on_descarga_completa=self._descarga_completa, contexto=ctx)
 
-        notebook.add(self.pestana_clientes, text="  Clientes  ")
-        notebook.add(self.pestana_descarga, text="  1 · Descarga  ")
-        notebook.add(self.pestana_analisis, text="  2 · Análisis  ")
-        notebook.add(self.pestana_declaracion, text="  3 · Declaración  ")
-        notebook.add(self.pestana_configuracion, text="  Configuración  ")
+        trabajo = "Trabajo del mes"
+        nav.agregar(Pagina(self.pestana_descarga, "Descarga",
+                           "Descarga del SRI los comprobantes del período.", "1", trabajo))
+        nav.agregar(Pagina(self.pestana_analisis, "Análisis",
+                           "Revisa los XML descargados y sus totales.", "2", trabajo))
+        nav.agregar(Pagina(self.pestana_declaracion, "Declaración",
+                           "Calcula los casilleros del formulario de IVA y envía el informe "
+                           "al cliente.", "3", trabajo))
+        nav.agregar(Pagina(self.pestana_clientes, "Clientes",
+                           "Contribuyentes registrados, sus claves del SRI y sus carpetas.",
+                           grupo="Gestión"))
+        nav.agregar(Pagina(self.pestana_configuracion, "Configuración",
+                           "Sus datos para el informe y la cuenta de correo de envío.",
+                           abajo=True))
 
         # Barra de menús: «Clientes» (gestión del registro) e «Ir» (pestañas).
         self.menu = MenuPrincipal(self, ctx, self.pestana_clientes, [

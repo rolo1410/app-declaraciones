@@ -14,19 +14,33 @@ def etiqueta_cliente(c) -> str:
 
 
 class SelectorCliente(ttk.Frame):
-    def __init__(self, master, contexto: ContextoCliente, on_gestionar=None) -> None:
-        super().__init__(master, padding=(8, 6, 8, 2))
+    """Combo del cliente activo.
+
+    Horizontal (``Cliente: [combo] info [Gestionar…]``) o, con ``vertical``,
+    apilado para la barra lateral (etiqueta, combo y una línea de detalle).
+    """
+
+    def __init__(self, master, contexto: ContextoCliente, on_gestionar=None,
+                 vertical: bool = False) -> None:
+        super().__init__(master, padding=0 if vertical else (8, 6, 8, 2))
         self.contexto = contexto
         self._por_etiqueta: dict = {}
+        self.vertical = vertical
 
-        ttk.Label(self, text="Cliente:").pack(side="left")
+        lado = {} if vertical else {"side": "left"}
+        ttk.Label(self, text="Cliente", foreground="gray" if vertical else "").pack(
+            anchor="w", **lado)
         self.var = tk.StringVar(value=SIN_CLIENTE)
-        self.combo = ttk.Combobox(self, textvariable=self.var, state="readonly", width=48)
-        self.combo.pack(side="left", padx=6)
+        self.combo = ttk.Combobox(self, textvariable=self.var, state="readonly",
+                                  width=24 if vertical else 48)
+        self.combo.pack(fill="x" if vertical else "none", pady=(4, 0) if vertical else 0,
+                        padx=0 if vertical else 6, **lado)
         self.combo.bind("<<ComboboxSelected>>", self._elegido)
-        self.lbl_info = ttk.Label(self, text="", foreground="gray")
-        self.lbl_info.pack(side="left", padx=6)
-        if on_gestionar is not None:
+        self.lbl_info = ttk.Label(self, text="", foreground="gray",
+                                  wraplength=200 if vertical else 0, justify="left")
+        self.lbl_info.pack(anchor="w", pady=(4, 0) if vertical else 0,
+                           padx=0 if vertical else 6, **lado)
+        if on_gestionar is not None and not vertical:
             ttk.Button(self, text="Gestionar clientes…", command=on_gestionar).pack(side="right")
 
         contexto.al_cambiar_lista(self.refrescar)
@@ -50,7 +64,10 @@ class SelectorCliente(ttk.Frame):
             self.lbl_info.configure(text="RUC, clave y carpeta se ingresan a mano en «Descarga».")
         else:
             self.var.set(etiqueta_cliente(c))
-            self.lbl_info.configure(text=f"{c.nombre_tipo} · carpeta clientes/{c.carpeta}")
+            if self.vertical:
+                self.lbl_info.configure(text=f"RUC {c.ruc}\n{c.nombre_tipo}")
+            else:
+                self.lbl_info.configure(text=f"{c.nombre_tipo} · carpeta clientes/{c.carpeta}")
 
     def _elegido(self, _evento=None) -> None:
         self.contexto.fijar(self._por_etiqueta.get(self.var.get()))

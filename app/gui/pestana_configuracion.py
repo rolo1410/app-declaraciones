@@ -20,6 +20,12 @@ OTRO_PROVEEDOR = "Otro (manual)"
 SEGURIDAD_TEXTO = {"ssl": "SSL/TLS", "starttls": "STARTTLS", "ninguna": "Ninguna"}
 
 
+def _ajustar_ancho(etiqueta: ttk.Label) -> ttk.Label:
+    """El texto se reparte en líneas según el ancho real de la etiqueta."""
+    etiqueta.bind("<Configure>", lambda e: e.widget.configure(wraplength=max(e.width - 4, 120)))
+    return etiqueta
+
+
 class PestanaConfiguracion(ttk.Frame):
     def __init__(self, master, contexto: ContextoCliente) -> None:
         super().__init__(master, padding=12)
@@ -54,10 +60,10 @@ class PestanaConfiguracion(ttk.Frame):
         d = ttk.LabelFrame(columnas, text="Quien prepara la declaración", padding=12)
         d.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         d.columnconfigure(1, weight=1)
-        ttk.Label(d, foreground=GRIS, wraplength=440, justify="left",
+        _ajustar_ancho(ttk.Label(d, foreground=GRIS, wraplength=440, justify="left",
                   text="Aparece al pie del informe PDF («Preparado por») y en la firma "
-                       "del correo que recibe el cliente.").grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+                       "del correo que recibe el cliente.")).grid(
+            row=0, column=0, columnspan=2, sticky="we", pady=(0, 8))
         self._campo(d, 1, "nombre", "Nombre o estudio *")
         self._campo(d, 2, "identificacion", "Cédula / RUC")
         self._campo(d, 3, "cargo", "Cargo", ayuda="P. ej. «Contador Público Autorizado»")
@@ -80,9 +86,9 @@ class PestanaConfiguracion(ttk.Frame):
         c = ttk.LabelFrame(columnas, text="Correo de envío (SMTP)", padding=12)
         c.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         c.columnconfigure(1, weight=1)
-        ttk.Label(c, foreground=GRIS, wraplength=440, justify="left",
-                  text="Cuenta con la que la app envía la declaración a sus clientes.").grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        _ajustar_ancho(ttk.Label(c, foreground=GRIS, wraplength=440, justify="left",
+                  text="Cuenta con la que la app envía la declaración a sus clientes.")).grid(
+            row=0, column=0, columnspan=2, sticky="we", pady=(0, 8))
 
         ttk.Label(c, text="Proveedor").grid(row=1, column=0, sticky="w", pady=3)
         self.var_proveedor = tk.StringVar(value=OTRO_PROVEEDOR)
@@ -111,11 +117,11 @@ class PestanaConfiguracion(ttk.Frame):
         self.btn_borrar_clave = ttk.Button(estado, text="Borrar contraseña",
                                            command=self._borrar_clave)
         self.btn_borrar_clave.pack(side="right")
-        ttk.Label(c, foreground=GRIS, wraplength=420, justify="left",
+        _ajustar_ancho(ttk.Label(c, foreground=GRIS, wraplength=420, justify="left",
                   text="Gmail y Outlook piden una «contraseña de aplicación» (se crea en la "
                        "seguridad de la cuenta, con la verificación en dos pasos activa). "
-                       "Se guarda cifrada y no se vuelve a mostrar.").grid(
-            row=7, column=1, sticky="w", padx=(8, 0), pady=(2, 6))
+                       "Se guarda cifrada y no se vuelve a mostrar.")).grid(
+            row=7, column=1, sticky="we", padx=(8, 0), pady=(2, 6))
 
         self._campo(c, 8, "remitente", "Nombre del remitente",
                     ayuda="Lo que ve el cliente como remitente. Vacío: su correo.")
