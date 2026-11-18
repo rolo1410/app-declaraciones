@@ -37,8 +37,11 @@ class _Dialogo(ttk.Frame):
     """
 
     def __init__(self, padre, titulo: str) -> None:
-        raiz = padre.winfo_toplevel()
+        # La ventana principal (raíz de Tk), aunque ``padre`` esté dentro de otro
+        # formulario flotante: así la pila y el velo son siempre los de la app.
+        raiz = padre._root()
         self._raiz = raiz
+        self._origen = padre
         self._velo: tk.Toplevel | None = None
         if FLOTANTE:
             self._velo = tk.Toplevel(raiz, background="#000000")
@@ -116,6 +119,10 @@ class _Dialogo(ttk.Frame):
     def _contiene(self, w) -> bool:
         return str(w).startswith(str(self) + ".")
 
+    def abre_desde(self, w) -> bool:
+        """``w`` es este formulario o algo dentro de él."""
+        return w is not None and (str(w) == str(self) or self._contiene(w))
+
     # Las teclas se enlazan a la ventana del diálogo y a la principal, para que
     # funcionen aunque el foco haya quedado debajo. Con diálogos anidados manda
     # el de arriba de la pila.
@@ -185,8 +192,9 @@ class _Dialogo(ttk.Frame):
 
     def mostrar(self):
         pila = self._pila()
-        if pila:
-            # Un solo formulario modal a la vez: se trae al frente el abierto.
+        if pila and not pila[-1].abre_desde(self._origen):
+            # Un solo formulario modal a la vez (salvo los que abre el propio
+            # formulario, p. ej. la frase de la copia desde Configuración).
             abierto = pila[-1]
             self._descartar()
             abierto._al_frente()
@@ -313,7 +321,7 @@ def tras_el_clic(widget, accion):
     def abrir() -> None:
         raiz.accion_pendiente = False
         pila = getattr(raiz, "pila_dialogos", [])
-        if pila:  # ya hay un formulario abierto: un solo modal a la vez
+        if pila and not pila[-1].abre_desde(widget):  # un solo modal a la vez
             pila[-1]._al_frente()
             return
         accion()

@@ -356,6 +356,16 @@ def candado_descargas() -> Candado:
     return Candado(datos_dir() / "descarga.lock")
 
 
+def candado_app() -> Candado:
+    """Una sola ventana de la app a la vez (por carpeta de datos)."""
+    return Candado(datos_dir() / "app.lock")
+
+
+def ruta_pid_app() -> Path:
+    """PID de la ventana abierta, para traerla al frente desde un segundo intento."""
+    return datos_dir() / "app.pid"
+
+
 def abrir_en_explorador(ruta: Path) -> None:
     """Abre una carpeta en el explorador de archivos del sistema."""
     ruta = str(ruta)

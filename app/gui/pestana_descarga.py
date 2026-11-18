@@ -43,6 +43,7 @@ class PestanaDescarga(ttk.Frame):
         if contexto is not None:
             contexto.al_cambiar_cliente(self._mostrar_cliente)
             contexto.al_cambiar_lista(self._mostrar_cliente)
+            contexto.al_cambiar_periodo(self._mostrar_periodo)
         self._mostrar_cliente()
         self.after(100, self._poll_log_queue)
 
@@ -207,6 +208,17 @@ class PestanaDescarga(ttk.Frame):
         self.lbl_cliente.configure(text=texto)
         self.frm_cliente.pack(fill="x", before=self.frm_per, **pad)
 
+    def _mostrar_periodo(self) -> None:
+        """El mes elegido en la cuadrícula de Clientes es el que se descarga."""
+        periodo = self.contexto.periodo if self.contexto is not None else None
+        if not periodo:
+            return
+        anio, mes = periodo.split("-")
+        valores = list(self.cmb_anio.cget("values")) if hasattr(self, "cmb_anio") else []
+        if not valores or anio in valores:
+            self.var_anio.set(anio)
+        self.var_mes.set(MESES[int(mes) - 1][0])
+
     def _tiene_clave(self, c: clientes.Cliente) -> bool:
         try:
             return self.contexto.registro.tiene_clave(c.id)
@@ -214,7 +226,7 @@ class PestanaDescarga(ttk.Frame):
             return False
 
     def _cambiar_clave_cliente(self, cliente: clientes.Cliente | None = None) -> bool:
-        from .pestana_clientes import cambiar_clave_de
+        from .acciones_clientes import cambiar_clave_de
 
         c = cliente or self._cliente()
         return bool(c) and cambiar_clave_de(self, self.contexto, c)

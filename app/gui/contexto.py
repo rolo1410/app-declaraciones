@@ -30,6 +30,9 @@ class ContextoCliente:
         )
         self.registro = clientes.Registro(llavero=llavero)
         self.cliente: Cliente | None = None
+        # Mes de trabajo (AAAA-MM) elegido en la cuadrícula de Clientes.
+        self.periodo: str | None = None
+        self._oyentes_periodo: list[Oyente] = []
         self._oyentes_cliente: list[Oyente] = []
         self._oyentes_lista: list[Oyente] = []
         self._oyentes_seguimiento: list[Oyente] = []
@@ -41,6 +44,23 @@ class ContextoCliente:
 
     def al_cambiar_lista(self, fn: Oyente) -> None:
         self._oyentes_lista.append(fn)
+
+    def quitar_oyente(self, fn: Oyente) -> None:
+        """Deja de avisar a ``fn`` (p. ej. al cerrar un formulario que escuchaba)."""
+        for lista in (self._oyentes_cliente, self._oyentes_lista, self._oyentes_periodo,
+                      self._oyentes_seguimiento):
+            while fn in lista:
+                lista.remove(fn)
+
+    def al_cambiar_periodo(self, fn: Oyente) -> None:
+        self._oyentes_periodo.append(fn)
+
+    def fijar_periodo(self, periodo: str | None) -> None:
+        if periodo == self.periodo:
+            return
+        self.periodo = periodo
+        for fn in list(self._oyentes_periodo):
+            fn()
 
     def al_cambiar_seguimiento(self, fn: Oyente) -> None:
         self._oyentes_seguimiento.append(fn)

@@ -23,8 +23,7 @@ from typing import Callable
 from ..core import preferencias
 from .contexto import ContextoCliente
 from .dialogos import tras_el_clic
-from .pestana_clientes import PestanaClientes
-from .selector_cliente import SIN_CLIENTE, etiqueta_cliente
+from .acciones_clientes import AccionesClientes
 
 ES_MAC = platform.system() == "Darwin"
 _MOD_EVT = "Command" if ES_MAC else "Control"
@@ -35,11 +34,12 @@ def _atajo(tecla: str, shift: bool = False) -> tuple[str, str]:
 
     En macOS Tk dibuja «Command-Shift-O» como ⌘⇧O; en el resto se muestra tal cual.
     """
+    visible = {"comma": ","}.get(tecla, tecla.upper())
     if ES_MAC:
-        texto = f"Command-{'Shift-' if shift else ''}{tecla.upper()}"
+        texto = f"Command-{'Shift-' if shift else ''}{visible}"
     else:
-        texto = f"Ctrl+{'Shift+' if shift else ''}{tecla.upper()}"
-    keysym = tecla.upper() if shift else tecla.lower()
+        texto = f"Ctrl+{'Shift+' if shift else ''}{visible}"
+    keysym = tecla.upper() if shift and len(tecla) == 1 else tecla.lower()
     return texto, f"<{_MOD_EVT}-{'Shift-' if shift else ''}{keysym}>"
 
 
@@ -50,15 +50,16 @@ class MenuPrincipal:
         self,
         raiz: tk.Tk,
         contexto: ContextoCliente,
-        pestana_clientes: PestanaClientes,
+        acciones: AccionesClientes,
         pestanas: list[tuple[str, Callable[[], None]]],
+        al_configurar: Callable[[], None] | None = None,
     ) -> None:
+        self.al_configurar = al_configurar
         self.raiz = raiz
         self.contexto = contexto
-        self.clientes = pestana_clientes
+        self.clientes = acciones
         self.ir_a_clientes = pestanas[0][1]
 
-        self._var_activo = tk.StringVar(master=raiz, value="")
         self.barra = tk.Menu(raiz)
         self._menu_clientes()
         self._menu_ir(pestanas)
@@ -97,9 +98,7 @@ class MenuPrincipal:
         p = self.clientes
 
         self._agregar(m, "Nuevo cliente…", p.nuevo, "n")
-        self.m_cambiar = tk.Menu(m, tearoff=False)
-        m.add_cascade(label="Cambiar de cliente", menu=self.m_cambiar)
-        self._agregar(m, "Gestionar clientes", self.ir_a_clientes)  # ⌘/Ctrl+0 en «Ir»
+        self._agregar(m, "Ver todos los clientes", self.ir_a_clientes)  # ⌘/Ctrl+0 en «Ir»
 
         m.add_separator()
         # Encabezado (deshabilitado) con el nombre del cliente activo.
@@ -132,6 +131,11 @@ class MenuPrincipal:
         m.add_separator()
         m.add_command(label="Importar clave del .env…", command=tras_el_clic(r, p.importar_env))
         self.i_env = m.index("end")
+        if self.al_configurar is not None:
+            m.add_separator()
+            # En macOS ⌘, ya lo da «Ajustes…» del menú de la app (tk::mac::ShowPreferences).
+            self._agregar(m, "Configuración…", self.al_configurar,
+                          None if ES_MAC else "comma")
 
         self.barra.add_cascade(label="Clientes", menu=m)
 
@@ -167,7 +171,7 @@ class MenuPrincipal:
         c = self.contexto.cliente
         m = self.m_clientes
         m.entryconfigure(self.i_encabezado,
-                         label=f"Cliente activo: {etiqueta_cliente(c)}" if c
+                         label=f"Cliente activo: {c.nombre} ({c.ruc})" if c
                          else "Sin cliente activo")
         estado = "normal" if c else "disabled"
         for i in self.i_activo:
@@ -179,26 +183,6 @@ class MenuPrincipal:
             heredada = None
         m.entryconfigure(self.i_env, state="normal" if heredada else "disabled")
 
-        self._llenar_cambiar(c)
-
-    def _llenar_cambiar(self, activo) -> None:
-        sub = self.m_cambiar
-        sub.delete(0, "end")
-        try:
-            lista = self.contexto.registro.listar()
-        except Exception:  # noqa: BLE001 - el error ya lo muestra el selector
-            lista = []
-        self._var_activo.set(str(activo.id) if activo else "")
-        sub.add_radiobutton(label=SIN_CLIENTE, variable=self._var_activo, value="",
-                            command=lambda: self.contexto.fijar(None))
-        if lista:
-            sub.add_separator()
-        for cli in lista:
-            sub.add_radiobutton(label=etiqueta_cliente(cli), variable=self._var_activo,
-                                value=str(cli.id),
-                                command=lambda x=cli: self.contexto.fijar(x))
-        if not lista:
-            sub.add_command(label="(aún no hay clientes registrados)", state="disabled")
 
     # --------------------------------------------------------------- acciones
     def _con_activo(self, accion: Callable) -> None:

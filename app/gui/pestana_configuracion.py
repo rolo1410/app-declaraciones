@@ -10,9 +10,10 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from ..core import cifrado, clientes, correo, perfil
+from ..core import cifrado, clientes, correo, perfil, plataforma, preferencias
+from .acciones_clientes import AccionesClientes
 from .contexto import ContextoCliente
-from .dialogos import tipos_archivo
+from .dialogos import _Dialogo, tipos_archivo, tras_el_clic
 
 TITULO = "Configuración"
 ROJO, VERDE, GRIS = "#c0392b", "#1e8449", "gray"
@@ -27,10 +28,14 @@ def _ajustar_ancho(etiqueta: ttk.Label) -> ttk.Label:
 
 
 class PestanaConfiguracion(ttk.Frame):
-    def __init__(self, master, contexto: ContextoCliente) -> None:
-        super().__init__(master, padding=12)
+    def __init__(self, master, contexto: ContextoCliente,
+                 acciones: AccionesClientes | None = None, en_dialogo: bool = False) -> None:
+        super().__init__(master, padding=0 if en_dialogo else (18, 12, 18, 12))
+        self.en_dialogo = en_dialogo
         self.contexto = contexto
         self.registro = contexto.registro
+        self.acciones = acciones or AccionesClientes(self, contexto)
+        self.acciones.al_cambiar_datos.append(self._mostrar_archivos)
         self.perfil = perfil.leer()
         self._vars: dict[str, tk.Variable] = {}
         self._logo_img = None
@@ -136,13 +141,99 @@ class PestanaConfiguracion(ttk.Frame):
         self.lbl_prueba = ttk.Label(prueba, text="", wraplength=300, justify="left")
         self.lbl_prueba.pack(side="left", padx=8)
 
-        # --- Guardar -------------------------------------------------------------
+        # --- Archivos y seguridad ------------------------------------------------
+        self._construir_archivos(columnas)
+
+        # --- Guardar (en el formulario modal lo ponen sus propios botones) -------
+        if self.en_dialogo:
+            return
         barra = ttk.Frame(self)
         barra.pack(fill="x", pady=(12, 0))
         ttk.Button(barra, text="Guardar cambios", command=self.guardar,
                    default="active").pack(side="right")
         self.lbl_estado = ttk.Label(barra, text="", foreground=GRIS)
         self.lbl_estado.pack(side="right", padx=10)
+
+    def _construir_archivos(self, columnas) -> None:
+        a = self.acciones
+        marco = ttk.LabelFrame(columnas, text="Archivos y seguridad", padding=12)
+        marco.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(12, 0))
+        marco.columnconfigure(1, weight=1)
+
+        ttk.Label(marco, text="Ruta de los archivos").grid(row=0, column=0, sticky="w", pady=3)
+        self.var_base = tk.StringVar()
+        ttk.Entry(marco, textvariable=self.var_base, state="readonly").grid(
+            row=0, column=1, sticky="we", padx=8, pady=3)
+        ttk.Button(marco, text="Cambiar…", command=tras_el_clic(self, a.cambiar_base)).grid(
+            row=0, column=2, padx=(0, 6))
+        ttk.Button(marco, text="Abrir", command=a.abrir_base).grid(row=0, column=3)
+        self.lbl_nube = _ajustar_ancho(ttk.Label(marco, text="", foreground="#b9770e",
+                                                 justify="left"))
+        self.lbl_nube.grid(row=1, column=1, columnspan=3, sticky="we", padx=8)
+
+        ttk.Label(marco, text="Llave maestra").grid(row=2, column=0, sticky="nw", pady=(10, 3))
+        self.lbl_llave = _ajustar_ancho(ttk.Label(marco, text="", justify="left"))
+        self.lbl_llave.grid(row=2, column=1, sticky="we", padx=8, pady=(10, 3))
+        llave = ttk.Frame(marco)
+        llave.grid(row=2, column=2, columnspan=2, sticky="e", pady=(10, 3))
+        ttk.Button(llave, text="Copia de emergencia…",
+                   command=tras_el_clic(self, a.exportar_copia)).pack(side="left")
+        ttk.Button(llave, text="Restaurar…",
+                   command=tras_el_clic(self, a.restaurar_copia)).pack(side="left", padx=6)
+        ttk.Button(llave, text="Respaldo completo…",
+                   command=tras_el_clic(self, a.respaldo_completo)).pack(side="left")
+
+        self.frm_env = ttk.Frame(marco)
+        self.frm_env.grid(row=3, column=0, columnspan=4, sticky="we", pady=(10, 0))
+        self.lbl_env = _ajustar_ancho(ttk.Label(self.frm_env, foreground="#b9770e",
+                                                justify="left"))
+        self.lbl_env.pack(side="left", fill="x", expand=True)
+        ttk.Button(self.frm_env, text="Importar…",
+                   command=tras_el_clic(self, a.importar_env)).pack(side="right")
+        self.contexto.al_cambiar_lista(self._mostrar_archivos)
+
+    def destroy(self) -> None:
+        # Al cerrar el formulario, dejar de escuchar los cambios.
+        self.contexto.quitar_oyente(self._mostrar_archivos)
+        if self._mostrar_archivos in self.acciones.al_cambiar_datos:
+            self.acciones.al_cambiar_datos.remove(self._mostrar_archivos)
+        super().destroy()
+
+    _ESTADOS_LLAVE = {
+        "sin_configurar": ("Aún no hay llave: se crea al registrar el primer cliente.", GRIS),
+        "ok": ("Disponible en este equipo.", VERDE),
+        "falta": ("No está en este equipo: restaure la copia de emergencia (.llave).", ROJO),
+        "no_corresponde": ("No corresponde a la base de clientes: restaure la copia de "
+                           "emergencia (.llave).", ROJO),
+    }
+
+    def _mostrar_archivos(self) -> None:
+        if not self.winfo_exists():
+            return
+        base = self.registro.base
+        self.var_base.set(str(base))
+        nube = plataforma.carpeta_en_nube(base)
+        self.lbl_nube.configure(text=(
+            f"⚠ La ruta está dentro de {nube}: los comprobantes de sus clientes (datos "
+            "personales y tributarios) se copian a la nube. Se recomienda una carpeta local."
+        ) if nube else "")
+        try:
+            texto, color = self._ESTADOS_LLAVE[self.registro.estado_llave()]
+        except Exception as e:  # noqa: BLE001
+            texto, color = f"No se pudo comprobar la llave: {e}", ROJO
+        if self.contexto.sin_almacen:
+            texto += " Protegida con frase de paso (este equipo no tiene almacén de claves)."
+        self.lbl_llave.configure(text=texto, foreground=color)
+        heredada = preferencias.clave_heredada()
+        if heredada:
+            origen = ("una variable de entorno" if heredada["origen"] == "entorno"
+                      else "el archivo .env")
+            self.lbl_env.configure(text=f"⚠ Hay una clave del SRI en texto plano en {origen} "
+                                        "(SRI_CLAVE). Impórtela a un cliente para guardarla "
+                                        "cifrada.")
+            self.frm_env.grid()
+        else:
+            self.frm_env.grid_remove()
 
     # ------------------------------------------------------------------ datos
     def _cargar(self) -> None:
@@ -162,6 +253,7 @@ class PestanaConfiguracion(ttk.Frame):
         self.var_proveedor.set(proveedor)
         self._mostrar_logo()
         self._mostrar_estado_clave()
+        self._mostrar_archivos()
 
     def _leer(self) -> perfil.Perfil:
         v = {k: str(var.get()).strip() for k, var in self._vars.items()}
@@ -199,8 +291,10 @@ class PestanaConfiguracion(ttk.Frame):
             self._vars["clave"].set("")
         self.perfil = nuevo
         self._mostrar_estado_clave()
-        self.lbl_estado.configure(text="Cambios guardados.", foreground=VERDE)
-        self.after(4000, lambda: self.lbl_estado.configure(text=""))
+        if not self.en_dialogo:  # en el formulario modal, guardar lo cierra
+            self.lbl_estado.configure(text="Cambios guardados.", foreground=VERDE)
+            self.after(4000, lambda: self.lbl_estado.winfo_exists()
+                       and self.lbl_estado.configure(text=""))
         return True
 
     def _mostrar_estado_clave(self) -> None:
@@ -321,3 +415,21 @@ class PestanaConfiguracion(ttk.Frame):
                                           foreground=ROJO)
 
         esperar()
+
+
+class DialogoConfiguracion(_Dialogo):
+    """Configuración como formulario modal sobre la ventana atenuada."""
+
+    def __init__(self, padre, contexto: ContextoCliente, acciones: AccionesClientes) -> None:
+        super().__init__(padre, "Configuración")
+        self.pagina = PestanaConfiguracion(self.cuerpo, contexto, acciones, en_dialogo=True)
+        self.pagina.grid(row=0, column=0, columnspan=3, sticky="nsew")
+        self._botones(2, "Guardar")
+
+    def aceptar(self) -> None:
+        if self.pagina.guardar():
+            self.destroy()
+
+
+def abrir_configuracion(padre, contexto: ContextoCliente, acciones: AccionesClientes) -> None:
+    DialogoConfiguracion(padre, contexto, acciones).mostrar()

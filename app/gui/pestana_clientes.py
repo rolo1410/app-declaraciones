@@ -1,458 +1,578 @@
-"""Pestaña «Clientes»: registro de contribuyentes, claves cifradas y carpetas.
+"""Página de inicio «Clientes»: la cartera del contador y la ficha de cada mes.
 
-Permite dar de alta clientes (RUC, nombre y clave de SRI en línea), reemplazar
-la clave (nunca mostrarla), desactivar, abrir su carpeta, configurar la ruta
-base, y exportar/restaurar la copia de emergencia de la llave maestra.
+Izquierda: un cliente por fila con sus 12 meses del año (gris pendiente,
+naranja declarada, verde enviada, ✓ cobrada). Un clic en un cuadro elige ese
+cliente y ese mes como **mes de trabajo**.
+
+Derecha: la ficha del cliente (datos y acciones) y las etapas del mes en el
+orden del trabajo, cada una con su estado y su botón:
+
+    1 Descargar comprobantes → 2 Calcular la declaración → 3 Presentar en el SRI
+    → 4 Enviar al cliente → 5 Cobrar
 """
 from __future__ import annotations
 
-import os
-from datetime import datetime
-from pathlib import Path
-
+import sys
 import tkinter as tk
-from tkinter import filedialog, font, messagebox, ttk
+from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from tkinter import font, messagebox, ttk
+from typing import Callable
 
-from ..core import cifrado, clientes, db, plataforma, preferencias
-from ..core import ruc as ruc_mod
-from . import dialogos
+from ..core import clientes, informe, plataforma
+from ..core.informe import MESES, nombre_periodo
+from .acciones_clientes import AccionesClientes
 from .contexto import ContextoCliente
+from .dialogos import pedir_fecha, tras_el_clic
 
 TITULO = "Clientes"
+ES_MAC = sys.platform == "darwin"
+MESES_CORTOS = [m[:3].capitalize() for m in MESES]
 
-_ESTADOS_LLAVE = {
-    "sin_configurar": ("Aún no hay llave maestra: se crea al registrar el primer cliente.", "gray"),
-    "ok": ("Llave maestra disponible.", "#1e8449"),
-    "falta": ("No se encuentra la llave maestra en este equipo: restaure la copia de "
-              "emergencia (.llave).", "#c0392b"),
-    "no_corresponde": ("La llave de este equipo no corresponde a la base de clientes: "
-                       "restaure la copia de emergencia (.llave).", "#c0392b"),
-}
+LADO = 22          # lado del cuadro
+PASO = 30          # ancho de cada columna de mes
+ALTO_FILA = 46
+X_MESES = 200      # inicio de la columna de meses (antes: nombre y RUC)
+ALTO_CABECERA = 28
+ANCHO_FICHA = 400
+
+
+def _es_oscuro(widget) -> bool:
+    try:
+        r, g, b = (v >> 8 for v in widget.winfo_rgb(
+            "systemWindowBackgroundColor" if ES_MAC else "SystemButtonFace"))
+    except tk.TclError:
+        return False
+    return (0.299 * r + 0.587 * g + 0.114 * b) < 128
+
+
+def paleta(widget) -> dict[str, str]:
+    oscuro = _es_oscuro(widget)
+    base = {
+        "pendiente": "#48484a" if oscuro else "#d1d1d6",
+        "declarada": "#ff9f0a" if oscuro else "#ef8a00",
+        "enviada": "#30b465" if oscuro else "#2e9d5b",
+        "secundario": "#8e8e93",
+        "fila_sel": "#3a3a3c" if oscuro else "#e8e8ed",
+        "fila_hover": "#353537" if oscuro else "#f2f2f5",
+        "anillo": "#ffffff" if oscuro else "#1c1c1e",
+        "aviso": "#ff9f0a" if oscuro else "#b35c00",
+    }
+    if ES_MAC:
+        base.update(fondo="systemWindowBackgroundColor", texto="systemTextColor")
+    else:
+        base.update(fondo=ttk.Style(widget).lookup("TFrame", "background") or "#f0f0f0",
+                    texto="#1f2328")
+    return base
+
+
+ETIQUETA_ESTADO = {"pendiente": "Pendiente", "declarada": "Declarada",
+                   "enviada": "Enviada al cliente"}
+
+
+def _fecha(texto: str | None) -> str:
+    """``2026-08-12`` / ``2026-08-12 10:30`` → ``12/08/2026`` / ``12/08/2026 10:30``."""
+    if not texto:
+        return ""
+    try:
+        if len(texto) > 10:
+            return datetime.strptime(texto, "%Y-%m-%d %H:%M").strftime("%d/%m/%Y %H:%M")
+        return date.fromisoformat(texto).strftime("%d/%m/%Y")
+    except ValueError:
+        return texto
+
+
+def _decimal(valor) -> Decimal:
+    try:
+        return Decimal(str(valor))
+    except (InvalidOperation, ValueError):
+        return Decimal("0")
+
+
+def _monto(valor) -> str:
+    return f"$ {_decimal(valor):,.2f}"
+
+
+def periodo_por_defecto() -> tuple[int, int]:
+    """El mes anterior: es el que se declara este mes."""
+    hoy = date.today()
+    return (hoy.year - 1, 12) if hoy.month == 1 else (hoy.year, hoy.month - 1)
+
+
+@dataclass
+class Navegar:
+    """Lo que la ficha necesita de la ventana para llevar a cada etapa."""
+    descarga: Callable[[], None]
+    declaracion: Callable[[], None]
+    enviar: Callable[[], None]
 
 
 class PestanaClientes(ttk.Frame):
-    def __init__(self, master, contexto: ContextoCliente) -> None:
-        super().__init__(master, padding=10)
+    def __init__(self, master, contexto: ContextoCliente, acciones: AccionesClientes,
+                 navegar: Navegar) -> None:
+        super().__init__(master, padding=(18, 6, 18, 12))
         self.contexto = contexto
         self.registro = contexto.registro
-        self._por_iid: dict[str, clientes.Cliente] = {}
+        self.acciones = acciones
+        self.navegar = navegar
+        self.anio = periodo_por_defecto()[0]
+        self._clientes: list[clientes.Cliente] = []
+        self._estados: dict = {}
+        self._hover: int | None = None
+        self._con_marcador = False
+        self.colores = paleta(self)
         self._construir()
         contexto.al_cambiar_lista(self.refrescar)
-        contexto.al_cambiar_cliente(self._marcar_activo)
+        contexto.al_cambiar_seguimiento(self.refrescar)
+        contexto.al_cambiar_cliente(self._contexto_cambiado)
+        contexto.al_cambiar_periodo(self._contexto_cambiado)
         self.refrescar()
-        self.after(400, self._ofrecer_importar_env)
 
     # ----------------------------------------------------------------- interfaz
-    def _tras(self, accion):
-        """Los botones que abren un diálogo lo hacen después del clic."""
-        return dialogos.tras_el_clic(self, accion)
-
     def _construir(self) -> None:
-        pad = {"padx": 6, "pady": 4}
-
+        familia = font.nametofont("TkDefaultFont").actual("family")
         barra = ttk.Frame(self)
-        barra.pack(fill="x", **pad)
-        ttk.Label(barra, text="Buscar:").pack(side="left")
+        barra.pack(fill="x", pady=(0, 10))
+        ttk.Button(barra, text="Nuevo cliente…",
+                   command=tras_el_clic(self, self._nuevo)).pack(side="left")
         self.var_buscar = tk.StringVar()
-        ent = ttk.Entry(barra, textvariable=self.var_buscar, width=28)
-        ent.pack(side="left", padx=6)
+        self.ent_buscar = ttk.Entry(barra, textvariable=self.var_buscar, width=26)
+        self.ent_buscar.pack(side="left", padx=(12, 0))
+        self._marcador(self.ent_buscar, "Buscar por nombre o RUC")
         self.var_buscar.trace_add("write", lambda *_: self.refrescar())
         self.var_inactivos = tk.BooleanVar(value=False)
-        ttk.Checkbutton(barra, text="Mostrar desactivados", variable=self.var_inactivos,
-                        command=self.refrescar).pack(side="left", padx=8)
-        ttk.Button(barra, text="Nuevo cliente…", command=self._tras(self.nuevo)).pack(side="right")
+        ttk.Checkbutton(barra, text="Desactivados", variable=self.var_inactivos,
+                        command=self.refrescar).pack(side="left", padx=(12, 0))
+        ttk.Button(barra, text="›", width=2,
+                   command=lambda: self._cambiar_anio(1)).pack(side="right")
+        self.lbl_anio = ttk.Label(barra, text="", width=5, anchor="center",
+                                  font=(familia, 15 if ES_MAC else 12, "bold"))
+        self.lbl_anio.pack(side="right", padx=4)
+        ttk.Button(barra, text="‹", width=2,
+                   command=lambda: self._cambiar_anio(-1)).pack(side="right")
 
-        self.banner_env = ttk.Frame(self)  # se muestra si hay SRI_CLAVE en .env
+        cuerpo = ttk.Frame(self)
+        cuerpo.pack(fill="both", expand=True)
 
-        marco = ttk.Frame(self)
-        marco.pack(fill="both", expand=True, **pad)
-        columnas = (("ruc", "RUC", 130), ("nombre", "Nombre / razón social", 280),
-                    ("correo", "Correo", 200),
-                    ("tipo", "Tipo", 120), ("carpeta", "Carpeta", 130), ("estado", "Estado", 90))
-        self.tabla = ttk.Treeview(marco, columns=[c[0] for c in columnas], show="headings",
-                                  selectmode="browse")
-        for clave, titulo, ancho in columnas:
-            self.tabla.heading(clave, text=titulo)
-            self.tabla.column(clave, width=ancho, stretch=(clave == "nombre"))
-        self.tabla.tag_configure("inactivo", foreground="gray")
-        negrita = font.nametofont("TkDefaultFont").copy()
-        negrita.configure(weight="bold")
-        self._negrita = negrita  # evitar que el recolector libere la fuente
-        self.tabla.tag_configure("activo_global", font=negrita)
-        scroll = ttk.Scrollbar(marco, orient="vertical", command=self.tabla.yview)
-        self.tabla.configure(yscrollcommand=scroll.set)
-        self.tabla.pack(side="left", fill="both", expand=True)
-        scroll.pack(side="right", fill="y")
-        self.tabla.bind("<Double-1>", lambda _e: self.usar())
-        self.tabla.bind("<<TreeviewSelect>>", lambda _e: self._actualizar_botones())
+        # Cartera (izquierda)
+        izquierda = ttk.Frame(cuerpo)
+        izquierda.pack(side="left", fill="both", expand=True)
+        self._leyenda(izquierda)
+        self.lbl_estado = ttk.Label(izquierda, text=" ", foreground="gray")
+        self.lbl_estado.pack(side="bottom", anchor="w", pady=(6, 0))
+        marco = ttk.Frame(izquierda)
+        marco.pack(fill="both", expand=True)
+        self.lienzo = tk.Canvas(marco, highlightthickness=0, background=self.colores["fondo"])
+        scroll = ttk.Scrollbar(marco, orient="vertical", command=self.lienzo.yview)
+        self.lienzo.configure(yscrollcommand=scroll.set)
+        self.lienzo.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="left", fill="y")
+        self.lienzo.bind("<Button-1>", self._clic)
+        self.lienzo.bind("<Motion>", self._mover)
+        self.lienzo.bind("<Leave>", self._salir)
+        self.lienzo.bind("<Configure>", lambda _e: self._dibujar())
+        self.lienzo.bind("<MouseWheel>", self._rueda)
 
-        acciones = ttk.Frame(self)
-        acciones.pack(fill="x", **pad)
-        self.btn_usar = ttk.Button(acciones, text="Usar este cliente", command=self.usar)
-        self.btn_clave = ttk.Button(acciones, text="Cambiar clave…", command=self._tras(self.cambiar_clave))
-        self.btn_nombre = ttk.Button(acciones, text="Editar datos…", command=self._tras(self.editar))
-        self.btn_activo = ttk.Button(acciones, text="Desactivar", command=self._tras(self.alternar_activo))
-        self.btn_carpeta = ttk.Button(acciones, text="Abrir carpeta", command=self.abrir_carpeta)
-        for b in (self.btn_usar, self.btn_clave, self.btn_nombre, self.btn_activo, self.btn_carpeta):
-            b.pack(side="left", padx=(0, 6))
+        ttk.Separator(cuerpo, orient="vertical").pack(side="left", fill="y", padx=(14, 0))
 
-        # --- Ruta base ---
-        frm_base = ttk.LabelFrame(self, text="Ruta base de los archivos", padding=8)
-        frm_base.pack(fill="x", **pad)
-        self.var_base = tk.StringVar()
-        ttk.Entry(frm_base, textvariable=self.var_base, state="readonly").pack(
-            side="left", fill="x", expand=True)
-        ttk.Button(frm_base, text="Cambiar…", command=self._tras(self.cambiar_base)).pack(side="left", padx=6)
-        ttk.Button(frm_base, text="Abrir", command=self.abrir_base).pack(side="left")
-        self.lbl_nube = ttk.Label(self, text="", foreground="#b9770e", wraplength=900,
-                                  justify="left")
-        self.lbl_nube.pack(fill="x", padx=12)
+        # Ficha (derecha)
+        self.ficha = ttk.Frame(cuerpo, padding=(18, 0, 0, 0), width=ANCHO_FICHA)
+        self.ficha.pack(side="left", fill="y")
+        self.ficha.pack_propagate(False)
 
-        # --- Llave maestra ---
-        frm_llave = ttk.LabelFrame(self, text="Llave maestra y respaldo", padding=8)
-        frm_llave.pack(fill="x", **pad)
-        self.lbl_llave = ttk.Label(frm_llave, text="", wraplength=520, justify="left")
-        self.lbl_llave.pack(side="left", fill="x", expand=True)
-        ttk.Button(frm_llave, text="Respaldo completo…", command=self._tras(self.respaldo_completo)).pack(
-            side="right")
-        ttk.Button(frm_llave, text="Restaurar llave…", command=self._tras(self.restaurar_copia)).pack(
-            side="right", padx=6)
-        ttk.Button(frm_llave, text="Exportar copia de emergencia…",
-                   command=self._tras(self.exportar_copia)).pack(side="right")
+    def _marcador(self, entrada: ttk.Entry, texto: str) -> None:
+        """Texto de ayuda dentro de la caja de búsqueda mientras está vacía."""
+        def mostrar(_e=None):
+            if not self.var_buscar.get() and self.focus_get() is not entrada:
+                self._con_marcador = True
+                entrada.configure(foreground="gray")
+                entrada.insert(0, texto)
+
+        def quitar(_e=None):
+            if self._con_marcador:
+                entrada.delete(0, "end")
+                entrada.configure(foreground="")
+                self._con_marcador = False
+
+        entrada.bind("<FocusIn>", quitar)
+        entrada.bind("<FocusOut>", mostrar)
+        self.after_idle(mostrar)
+
+    def _texto_buscar(self) -> str:
+        return "" if self._con_marcador else self.var_buscar.get().strip()
+
+    def _leyenda(self, padre) -> None:
+        c = self.colores
+        lienzo = tk.Canvas(padre, height=20, highlightthickness=0, background=c["fondo"])
+        lienzo.pack(fill="x", pady=(0, 4))
+        x = X_MESES
+        fuente = font.nametofont("TkDefaultFont")
+        chica = font.Font(family=fuente.actual("family"), size=fuente.actual("size") - 1)
+        for clave, texto in (("pendiente", "Pendiente"), ("declarada", "Declarada"),
+                             ("enviada", "Enviada"), ("cobrada", "Cobrada")):
+            color = c["enviada"] if clave == "cobrada" else c[clave]
+            lienzo.create_rectangle(x, 4, x + 12, 16, fill=color, outline="")
+            if clave == "cobrada":
+                self._check(lienzo, x, 4, 12, "#ffffff")
+            lienzo.create_text(x + 17, 10, text=texto, anchor="w", fill=c["secundario"],
+                               font=chica)
+            x += 17 + chica.measure(texto) + 16
 
     # ------------------------------------------------------------------ datos
     def refrescar(self) -> None:
-        seleccion = self._seleccionado()
-        self.tabla.delete(*self.tabla.get_children())
-        self._por_iid.clear()
         try:
-            lista = self.registro.listar(self.var_inactivos.get(), self.var_buscar.get())
+            todos = self.registro.listar(incluir_inactivos=self.var_inactivos.get())
+            self._estados = self.registro.estados_del_anio(self.anio)
         except Exception as e:  # noqa: BLE001
-            lista = []
-            messagebox.showerror(TITULO, f"No se pudo leer la base de clientes:\n{e}")
-        for c in lista:
-            iid = str(c.id)
-            self._por_iid[iid] = c
-            self.tabla.insert("", "end", iid=iid, values=(
-                c.ruc, c.nombre, c.correo or "—", c.nombre_tipo, c.carpeta, "Activo" if c.activo else "Desactivado"))
-        if seleccion and str(seleccion.id) in self._por_iid:
-            self.tabla.selection_set(str(seleccion.id))
-        self._marcar_activo()
-        self._actualizar_base()
-        self._actualizar_llave()
-        self._actualizar_botones()
+            todos, self._estados = [], {}
+            self.lbl_estado.configure(text=f"No se pudo leer la base de clientes: {e}")
+        buscar = self._texto_buscar().lower()
+        self._clientes = [c for c in todos if not buscar or buscar in c.nombre.lower()
+                          or buscar in c.ruc or (c.cedula and buscar in c.cedula)]
+        self.lbl_anio.configure(text=str(self.anio))
+        self._dibujar()
+        self._mostrar_ficha()
 
-    def _marcar_activo(self) -> None:
+    def _cambiar_anio(self, paso: int) -> None:
+        self.anio += paso
+        self.refrescar()
+
+    def _contexto_cambiado(self) -> None:
+        if self.contexto.periodo and int(self.contexto.periodo[:4]) != self.anio:
+            self.anio = int(self.contexto.periodo[:4])
+            self.refrescar()
+            return
+        self._dibujar()
+        self._mostrar_ficha()
+
+    def _estado(self, cliente, mes: int) -> clientes.EstadoMes:
+        return self._estados.get(cliente.id, {}).get(mes) or \
+            clientes.EstadoMes(f"{self.anio:04d}-{mes:02d}")
+
+    # ---------------------------------------------------------------- cuadrícula
+    @staticmethod
+    def _check(lienzo, x, y, lado, color) -> None:
+        lienzo.create_line(x + lado * 0.24, y + lado * 0.52, x + lado * 0.43, y + lado * 0.70,
+                           x + lado * 0.76, y + lado * 0.32, fill=color,
+                           width=max(2, lado // 9), capstyle="round", joinstyle="round")
+
+    def _mes_sel(self) -> int | None:
+        p = self.contexto.periodo
+        if p and int(p[:4]) == self.anio:
+            return int(p[5:7])
+        return None
+
+    def _dibujar(self) -> None:
+        cv, c = self.lienzo, self.colores
+        cv.delete("all")
+        fuente = font.nametofont("TkDefaultFont")
+        familia, tamano = fuente.actual("family"), fuente.actual("size")
+        chica = font.Font(family=familia, size=tamano - 2)
+        hoy = date.today()
+        ancho = max(cv.winfo_width(), X_MESES + 12 * PASO + 8)
+
+        if not self._clientes:
+            texto = ("Ningún cliente coincide con la búsqueda." if self._texto_buscar()
+                     else "Aún no hay clientes. Use «Nuevo cliente…» para registrar el primero.")
+            cv.create_text(8, 30, text=texto, anchor="w", fill=c["secundario"], font=fuente)
+            cv.configure(scrollregion=(0, 0, ancho, 80))
+            return
+
+        for mes in range(1, 13):
+            x = X_MESES + (mes - 1) * PASO + LADO / 2
+            actual = (self.anio, mes) == (hoy.year, hoy.month)
+            cv.create_text(x, ALTO_CABECERA / 2, text=MESES_CORTOS[mes - 1],
+                           fill=c["texto"] if actual else c["secundario"],
+                           font=(familia, tamano - 1, "bold" if actual else "normal"))
+
+        activo, mes_sel = self.contexto.cliente, self._mes_sel()
+        for fila, cliente in enumerate(self._clientes):
+            y0 = ALTO_CABECERA + fila * ALTO_FILA
+            sel = activo is not None and cliente.id == activo.id
+            if sel or self._hover == fila:
+                cv.create_rectangle(0, y0 + 1, ancho, y0 + ALTO_FILA - 1, outline="",
+                                    fill=c["fila_sel"] if sel else c["fila_hover"])
+            color_nombre = c["texto"] if cliente.activo else c["secundario"]
+            cv.create_text(8, y0 + ALTO_FILA / 2 - 8, text=self._recortar(cliente.nombre, fuente),
+                           anchor="w", fill=color_nombre, font=fuente)
+            por_cobrar = 0
+            for mes in range(1, 13):
+                estado = self._estado(cliente, mes)
+                x = X_MESES + (mes - 1) * PASO
+                y = y0 + (ALTO_FILA - LADO) / 2
+                cv.create_rectangle(x, y, x + LADO, y + LADO, fill=c[estado.estado], outline="")
+                if estado.cobrada:
+                    self._check(cv, x, y, LADO,
+                                "#ffffff" if estado.estado != "pendiente" else c["texto"])
+                elif estado.estado != "pendiente":
+                    por_cobrar += 1
+                if sel and mes == mes_sel:
+                    cv.create_rectangle(x - 3, y - 3, x + LADO + 3, y + LADO + 3,
+                                        outline=c["anillo"], width=2)
+            detalle = cliente.ruc if cliente.activo else f"{cliente.ruc} · desactivado"
+            id_ruc = cv.create_text(8, y0 + ALTO_FILA / 2 + 9, text=detalle, anchor="w",
+                                    fill=c["secundario"], font=chica)
+            if por_cobrar:
+                x_fin = cv.bbox(id_ruc)[2]
+                texto = f"· {por_cobrar} por cobrar"
+                if x_fin + 8 + chica.measure(texto) > X_MESES - 10:
+                    texto = f"· {por_cobrar}"
+                cv.create_text(x_fin + 8, y0 + ALTO_FILA / 2 + 9, text=texto, anchor="w",
+                               fill=c["aviso"], font=chica)
+        alto = ALTO_CABECERA + len(self._clientes) * ALTO_FILA + 8
+        cv.configure(scrollregion=(0, 0, ancho, alto))
+
+    @staticmethod
+    def _recortar(texto: str, fuente, maximo: int = X_MESES - 20) -> str:
+        if fuente.measure(texto) <= maximo:
+            return texto
+        while texto and fuente.measure(texto + "…") > maximo:
+            texto = texto[:-1]
+        return texto.rstrip() + "…"
+
+    def _celda(self, evento) -> tuple[int | None, int | None]:
+        x, y = self.lienzo.canvasx(evento.x), self.lienzo.canvasy(evento.y)
+        fila = int((y - ALTO_CABECERA) // ALTO_FILA)
+        if y < ALTO_CABECERA or not (0 <= fila < len(self._clientes)):
+            return None, None
+        rel = x - X_MESES
+        mes = int(rel // PASO) + 1 if rel >= 0 else None
+        if mes is not None and (mes > 12 or rel - (mes - 1) * PASO > LADO + 4):
+            mes = None
+        return fila, mes
+
+    def _clic(self, evento) -> None:
+        if getattr(self.winfo_toplevel(), "pila_dialogos", None):
+            return
+        fila, mes = self._celda(evento)
+        if fila is None:
+            return
+        self.elegir(self._clientes[fila], mes)
+
+    def elegir(self, cliente: clientes.Cliente, mes: int | None = None) -> None:
+        """Fija cliente y mes de trabajo (sin mes: el que ya estaba, o el anterior)."""
+        if mes is None:
+            anio_def, mes_def = periodo_por_defecto()
+            mes = self._mes_sel() or (mes_def if self.anio == anio_def else 12)
         activo = self.contexto.cliente
-        for iid, c in self._por_iid.items():
-            tags = []
-            if not c.activo:
-                tags.append("inactivo")
-            if activo is not None and c.id == activo.id:
-                tags.append("activo_global")
-            self.tabla.item(iid, tags=tags)
+        if activo is None or activo.id != cliente.id:
+            self.contexto.fijar(cliente)
+        self.contexto.fijar_periodo(f"{self.anio:04d}-{mes:02d}")
+        self._dibujar()
+        self._mostrar_ficha()
 
-    def _actualizar_base(self) -> None:
-        base = self.registro.base
-        self.var_base.set(str(base))
-        nube = plataforma.carpeta_en_nube(base)
-        self.lbl_nube.configure(text=(
-            f"⚠ La ruta base está dentro de {nube}. Son datos personales y tributarios de "
-            "terceros (LOPDP): se copiarán a la nube. Se recomienda una carpeta local."
-        ) if nube else "")
-
-    def _actualizar_llave(self) -> None:
-        try:
-            estado = self.registro.estado_llave()
-        except cifrado.ErrorCifrado as e:
-            self.lbl_llave.configure(text=str(e), foreground="#c0392b")
+    def _mover(self, evento) -> None:
+        fila, mes = self._celda(evento)
+        if fila != self._hover:
+            self._hover = fila
+            self._dibujar()
+        if fila is None or mes is None:
+            self.lbl_estado.configure(text=" ")
             return
-        except Exception as e:  # noqa: BLE001
-            self.lbl_llave.configure(text=f"No se pudo comprobar la llave: {e}",
-                                     foreground="#c0392b")
+        cliente = self._clientes[fila]
+        e = self._estado(cliente, mes)
+        partes = [f"{cliente.nombre} · {MESES[mes - 1]} {self.anio}: {ETIQUETA_ESTADO[e.estado]}"]
+        if e.cobrada:
+            partes.append("cobrada")
+        self.lbl_estado.configure(text=", ".join(partes))
+
+    def _salir(self, _evento=None) -> None:
+        self.lbl_estado.configure(text=" ")
+        if self._hover is not None:
+            self._hover = None
+            self._dibujar()
+
+    def _rueda(self, evento) -> None:
+        paso = -evento.delta if ES_MAC else -evento.delta // 120
+        self.lienzo.yview_scroll(int(paso), "units")
+
+    # -------------------------------------------------------------------- ficha
+    def _mostrar_ficha(self) -> None:
+        for hijo in self.ficha.winfo_children():
+            hijo.destroy()
+        f = self.ficha
+        familia = font.nametofont("TkDefaultFont").actual("family")
+        cliente, periodo = self.contexto.cliente, self.contexto.periodo
+        if cliente is None:
+            ttk.Label(f, text="Elija un cliente",
+                      font=(familia, 16 if ES_MAC else 13, "bold")).pack(anchor="w")
+            ttk.Label(f, foreground="gray", wraplength=ANCHO_FICHA - 30, justify="left",
+                      text="Haga clic en un mes de la cuadrícula para ver las etapas de ese mes: "
+                           "descarga, declaración, presentación, envío y cobro.").pack(
+                anchor="w", pady=(4, 0))
             return
-        texto, color = _ESTADOS_LLAVE[estado]
-        if self.contexto.sin_almacen:
-            texto += " (sin almacén del sistema: protegida con frase de paso)"
-        self.lbl_llave.configure(text=texto, foreground=color)
 
-    def _seleccionado(self) -> clientes.Cliente | None:
-        sel = self.tabla.selection() if hasattr(self, "tabla") else ()
-        return self._por_iid.get(sel[0]) if sel else None
+        # --- Datos del cliente ---------------------------------------------------
+        ttk.Label(f, text=cliente.nombre, font=(familia, 16 if ES_MAC else 13, "bold"),
+                  wraplength=ANCHO_FICHA - 30, justify="left").pack(anchor="w")
+        ttk.Label(f, foreground="gray",
+                  text=f"RUC {cliente.ruc} · {cliente.nombre_tipo}"
+                       + ("" if cliente.activo else " · desactivado")).pack(anchor="w", pady=(2, 0))
+        ttk.Label(f, foreground="gray" if cliente.correo else self.colores["aviso"],
+                  text=cliente.correo or "Sin correo para enviarle la declaración",
+                  wraplength=ANCHO_FICHA - 30, justify="left").pack(anchor="w")
+        botones = ttk.Frame(f)
+        botones.pack(anchor="w", pady=(8, 0))
+        a = self.acciones
+        ttk.Button(botones, text="Editar datos…",
+                   command=tras_el_clic(self, lambda: a.editar(cliente))).pack(side="left")
+        ttk.Button(botones, text="Clave SRI…",
+                   command=tras_el_clic(self, lambda: a.cambiar_clave(cliente))).pack(
+            side="left", padx=(6, 0))
+        ttk.Button(botones, text="Carpeta", command=lambda: a.abrir_carpeta(cliente)).pack(
+            side="left", padx=(6, 0))
+        # Botón directo (no un menú «Más»): un menú nativo dentro de una página
+        # que se oculta y se vuelve a construir colgaba Tk en macOS.
+        ttk.Button(botones, text="Reactivar" if not cliente.activo else "Desactivar…",
+                   command=tras_el_clic(self, lambda: a.alternar_activo(cliente))).pack(
+            side="left", padx=(6, 0))
 
-    def _actualizar_botones(self) -> None:
-        c = self._seleccionado()
-        estado = "normal" if c else "disabled"
-        for b in (self.btn_clave, self.btn_nombre, self.btn_activo, self.btn_carpeta):
-            b.configure(state=estado)
-        self.btn_usar.configure(state="normal" if c and c.activo else "disabled")
-        self.btn_activo.configure(text="Reactivar" if c and not c.activo else "Desactivar")
+        if not periodo:
+            return
+        ttk.Separator(f).pack(fill="x", pady=14)
 
-    # --------------------------------------------------------------- acciones
-    def _error(self, e: Exception) -> None:
-        messagebox.showerror(TITULO, str(e))
+        # --- Mes de trabajo --------------------------------------------------------
+        estado = self.registro.estado_mes(cliente.id, periodo)
+        cabecera = ttk.Frame(f)
+        cabecera.pack(fill="x")
+        ttk.Label(cabecera, text=nombre_periodo(periodo).capitalize(),
+                  font=(familia, 15 if ES_MAC else 12, "bold")).pack(side="left")
+        limite = informe.fecha_limite(cliente.ruc, periodo)
+        if limite:
+            vencido = limite < date.today() and not estado.declarada_en
+            ttk.Label(cabecera, text=f"vence {limite:%d/%m/%Y}",
+                      foreground=self.colores["aviso"] if vencido else "gray").pack(side="right")
 
-    def nuevo(self, ruc: str = "", clave: str = "") -> clientes.Cliente | None:
-        datos = dialogos.pedir_cliente_nuevo(self, ruc, clave)
-        if not datos:
-            return None
-        primera_vez = self._estado_llave_seguro() == "sin_configurar"
         try:
-            c = self.registro.crear_cliente(*datos[:3], correo=datos[3])
-        except (ruc_mod.RucInvalido, clientes.ErrorClientes, cifrado.ErrorCifrado) as e:
-            self._error(e)
-            return None
-        except OSError as e:
-            messagebox.showerror(TITULO, f"No se pudo crear la carpeta del cliente:\n{e}")
-            return None
-        self.contexto.lista_cambio()
-        if c.advertencias:
-            messagebox.showwarning(TITULO, "\n".join(c.advertencias))
-        self.contexto.fijar(c)
-        if primera_vez:
-            if messagebox.askyesno(
-                TITULO,
-                "Se creó la llave maestra que protege las claves de los clientes.\n\n"
-                "Sin ella (o sin una copia) las claves se pierden si el equipo falla o se "
-                "reinstala. ¿Exportar ahora la copia de emergencia?",
-            ):
-                self.exportar_copia()
-        return c
-
-    def _estado_llave_seguro(self) -> str:
-        try:
-            return self.registro.estado_llave()
+            carpetas = informe.carpetas_de_descarga(self.registro.carpeta_descargas(cliente),
+                                                    periodo)
         except Exception:  # noqa: BLE001
-            return "desconocido"
+            carpetas = []
+        n_xml = informe.contar_xml(carpetas)
+        r = estado.resumen or {}
+        a_pagar = _decimal(r.get("impuesto_a_pagar", 0))
+        resultado = ""
+        if r:
+            resultado = (f"{_monto(a_pagar)} a pagar" if a_pagar > 0
+                         else f"{_monto(r.get('credito_a_favor', 0))} de crédito a favor")
+        etapas = [
+            ("Descargar comprobantes", n_xml > 0,
+             f"{n_xml} XML descargados" if n_xml else "Aún no se descargan del SRI",
+             [("Descargar", self.navegar.descarga)]),
+            ("Calcular la declaración", bool(r),
+             f"{resultado} · {_fecha(estado.calculada_en)}" if r else "Sin calcular",
+             [("Declaración", self.navegar.declaracion)]),
+            ("Presentar en el SRI", bool(estado.declarada_en),
+             f"Declarada el {_fecha(estado.declarada_en)}" if estado.declarada_en
+             else "Márquela al presentarla en SRI en línea",
+             self._botones_fecha(cliente, periodo, "declarada", estado.declarada_en)),
+            ("Enviar al cliente", bool(estado.enviada_en),
+             (f"Enviada el {_fecha(estado.enviada_en)}"
+              + (f" ({estado.envios} envíos)" if estado.envios > 1 else ""))
+             if estado.enviada_en else "Informe PDF, Excel y XML por correo",
+             [("Abrir envío", lambda: self._abrir_envio(estado))] if estado.carpeta_envio
+             else [("Enviar…", self.navegar.enviar)]),
+            ("Cobrar", estado.cobrada,
+             f"Cobrada el {_fecha(estado.cobrada_en)}" if estado.cobrada else "Pendiente de cobro",
+             self._botones_fecha(cliente, periodo, "cobrada", estado.cobrada_en)),
+        ]
+        siguiente = next((i for i, e in enumerate(etapas) if not e[1]), None)
+        lista = ttk.Frame(f)
+        lista.pack(fill="x", pady=(10, 0))
+        lista.columnconfigure(1, weight=1)
+        for i, (titulo, hecha, detalle, acciones) in enumerate(etapas):
+            self._etapa(lista, i, titulo, hecha, i == siguiente, detalle, acciones)
 
-    def usar(self) -> None:
-        c = self._seleccionado()
-        if c and c.activo:
-            self.contexto.fijar(c)
+        if r:
+            ttk.Separator(f).pack(fill="x", pady=12)
+            ttk.Label(f, text="Resumen del mes",
+                      font=(familia, 13 if ES_MAC else 11, "bold")).pack(anchor="w")
+            tabla = ttk.Frame(f)
+            tabla.pack(fill="x", pady=(6, 0))
+            tabla.columnconfigure(1, weight=1)
+            filas = [("Ventas (409)", _monto(r.get("ventas")), False),
+                     ("Compras (509)", _monto(r.get("compras")), False),
+                     ("Impuesto generado (499)", _monto(r.get("impuesto_generado")), False),
+                     ("Crédito tributario (564)", _monto(r.get("credito_tributario")), False),
+                     ("Impuesto a pagar" if a_pagar > 0 else "Crédito a favor",
+                      _monto(a_pagar if a_pagar > 0 else r.get("credito_a_favor")), True)]
+            tamano = font.nametofont("TkDefaultFont").actual("size")
+            for i, (etiqueta, valor, fuerte) in enumerate(filas):
+                estilo = (familia, tamano, "bold" if fuerte else "normal")
+                ttk.Label(tabla, text=etiqueta, font=estilo).grid(row=i, column=0, sticky="w")
+                ttk.Label(tabla, text=valor, font=estilo).grid(row=i, column=1, sticky="e")
+            ttk.Label(tabla, foreground="gray",
+                      text=f"{r.get('comprobantes', '—')} comprobantes de compra").grid(
+                row=len(filas), column=0, columnspan=2, sticky="w", pady=(4, 0))
 
-    def cambiar_clave(self, c: clientes.Cliente | None = None) -> None:
-        c = c or self._seleccionado()
-        if c:
-            cambiar_clave_de(self, self.contexto, c)
+    def _etapa(self, lista, i: int, titulo: str, hecha: bool, siguiente: bool, detalle: str,
+               acciones) -> None:
+        c = self.colores
+        familia = font.nametofont("TkDefaultFont").actual("family")
+        tamano = font.nametofont("TkDefaultFont").actual("size")
+        marca = tk.Canvas(lista, width=20, height=20, highlightthickness=0, background=c["fondo"])
+        marca.grid(row=i, column=0, sticky="n", pady=(3, 10), padx=(0, 10))
+        if hecha:
+            marca.create_oval(1, 1, 19, 19, fill=c["enviada"], outline="")
+            self._check(marca, 1, 1, 18, "#ffffff")
+        else:
+            color = c["texto"] if siguiente else c["secundario"]
+            marca.create_oval(2, 2, 18, 18, outline=color, width=2)
+            marca.create_text(10, 10, text=str(i + 1), fill=color,
+                              font=(familia, max(tamano - 3, 8), "bold"))
+        textos = ttk.Frame(lista)
+        textos.grid(row=i, column=1, sticky="we", pady=(1, 10))
+        ttk.Label(textos, text=titulo,
+                  font=(familia, tamano, "bold" if siguiente else "normal")).pack(anchor="w")
+        ttk.Label(textos, text=detalle, foreground="gray", wraplength=ANCHO_FICHA - 200,
+                  justify="left").pack(anchor="w")
+        zona = ttk.Frame(lista)
+        zona.grid(row=i, column=2, sticky="ne", pady=(1, 10))
+        for texto, accion in reversed(acciones):
+            ttk.Button(zona, text=texto, command=accion).pack(side="right", padx=(4, 0))
 
-    def editar(self, c: clientes.Cliente | None = None, enfocar_correo: bool = False) -> bool:
-        """Nombre y correo del cliente. True si se guardó algún cambio."""
-        c = c or self._seleccionado()
-        if not c:
-            return False
-        datos = dialogos.pedir_datos_cliente(self, c, enfocar_correo)
-        if not datos:
-            return False
-        nombre, correo = datos
+    def _botones_fecha(self, cliente, periodo: str, que: str, valor: str | None):
+        if valor:
+            return [("Cambiar…", tras_el_clic(
+                        self, lambda: self._cambiar_fecha(cliente, periodo, que, valor))),
+                    ("Quitar", lambda: self._marcar(cliente, periodo, que, None))]
+        return [("Marcar hoy", lambda: self._marcar(cliente, periodo, que,
+                                                    date.today().isoformat()))]
+
+    # ----------------------------------------------------------------- acciones
+    def _nuevo(self) -> None:
+        c = self.acciones.nuevo()
+        if c is not None:
+            self.elegir(c)
+
+    def _marcar(self, cliente, periodo: str, que: str, fecha: str | None) -> None:
+        if fecha is None and not messagebox.askyesno(
+                TITULO, f"¿Quitar la marca de {que} de {nombre_periodo(periodo)}?"):
+            return
         try:
-            if nombre != c.nombre:
-                self.registro.renombrar(c.id, nombre)
-            if correo != c.correo:
-                self.registro.fijar_correo(c.id, correo)
+            self.registro.marcar(cliente.id, periodo, que, fecha)
         except clientes.ErrorClientes as e:
-            self._error(e)
-            return False
-        self.contexto.lista_cambio()
-        return True
-
-    def alternar_activo(self, c: clientes.Cliente | None = None) -> None:
-        c = c or self._seleccionado()
-        if not c:
+            messagebox.showerror(TITULO, str(e))
             return
-        if c.activo and not messagebox.askyesno(
-            TITULO, f"¿Desactivar a {c.nombre}?\n\nSus archivos y su historial se conservan; "
-                    "puede reactivarlo cuando quiera."):
+        self.contexto.seguimiento_cambio()
+
+    def _cambiar_fecha(self, cliente, periodo: str, que: str, actual: str | None) -> None:
+        fecha = pedir_fecha(self, f"Fecha de {que}",
+                            f"¿Qué día quedó {que} {nombre_periodo(periodo)} de {cliente.nombre}?",
+                            actual)
+        if fecha:
+            self._marcar(cliente, periodo, que, fecha)
+
+    def _abrir_envio(self, estado: clientes.EstadoMes) -> None:
+        ruta = Path(estado.carpeta_envio)
+        if not ruta.is_absolute():
+            ruta = self.registro.base / ruta
+        if not ruta.exists():
+            messagebox.showinfo(TITULO, f"La carpeta del envío ya no existe:\n{ruta}")
             return
-        self.registro.fijar_activo(c.id, not c.activo)
-        self.contexto.lista_cambio()
-
-    def abrir_carpeta(self, c: clientes.Cliente | None = None) -> None:
-        c = c or self._seleccionado()
-        if c:
-            try:
-                self._abrir(self.registro.asegurar_carpeta(c))
-            except OSError as e:
-                self._error(e)
-
-    def abrir_base(self) -> None:
-        self._abrir(self.registro.base)
-
-    def _abrir(self, ruta: Path) -> None:
         try:
-            Path(ruta).mkdir(parents=True, exist_ok=True)
             plataforma.abrir_en_explorador(ruta)
         except OSError as e:
-            self._error(e)
-
-    def cambiar_base(self) -> None:
-        carpeta = filedialog.askdirectory(title="Ruta base de los archivos de clientes",
-                                          initialdir=str(self.registro.base.parent))
-        if not carpeta:
-            return
-        nueva = Path(carpeta).resolve()
-        nube = plataforma.carpeta_en_nube(nueva)
-        if nube and not messagebox.askyesno(
-            TITULO, f"La carpeta elegida está dentro de {nube}: los comprobantes de sus "
-                    "clientes se subirán a la nube.\n\n¿Usarla de todas formas?"):
-            return
-        anterior = self.registro.base
-        if (plataforma.carpeta_clientes(anterior)).exists() and nueva != anterior:
-            messagebox.showinfo(
-                TITULO, "Los archivos que ya están en la ruta anterior no se mueven:\n"
-                        f"{plataforma.carpeta_clientes(anterior)}\n\n"
-                        "Si quiere conservarlos en la nueva ruta, mueva esa carpeta «clientes» "
-                        "a la nueva ubicación con la app cerrada.")
-        try:
-            plataforma.fijar_base_path(str(nueva))
-            for c in self.registro.listar(incluir_inactivos=False):
-                self.registro.asegurar_carpeta(c)
-        except OSError as e:
-            self._error(e)
-        self.contexto.lista_cambio()
-
-    def exportar_copia(self) -> None:
-        frase = dialogos.pedir_frase(
-            self, "Copia de emergencia",
-            "La copia de la llave maestra se cifra con una frase de paso. Guarde el archivo "
-            "FUERA de este equipo (memoria USB, gestor de contraseñas…) y anote la frase "
-            "por separado.", confirmar=True)
-        if not frase:
-            return
-        try:
-            datos = self.registro.exportar_copia(frase)
-        except (cifrado.ErrorCifrado, ValueError) as e:
-            self._error(e)
-            return
-        ruta = filedialog.asksaveasfilename(
-            title="Guardar copia de emergencia", defaultextension=cifrado.EXTENSION_COPIA,
-            initialfile=f"ComprobantesSRI-{datetime.now():%Y%m%d}{cifrado.EXTENSION_COPIA}",
-            filetypes=[("Copia de emergencia", f"*{cifrado.EXTENSION_COPIA}")])
-        if not ruta:
-            return
-        try:
-            plataforma.escribir_atomico(Path(ruta), datos)
-        except OSError as e:
-            self._error(e)
-            return
-        messagebox.showinfo(TITULO, f"Copia de emergencia guardada en:\n{ruta}\n\n"
-                                    "Muévala fuera de este equipo.")
-
-    def restaurar_copia(self) -> None:
-        ruta = filedialog.askopenfilename(
-            title="Restaurar llave desde la copia de emergencia",
-            filetypes=[("Copia de emergencia", f"*{cifrado.EXTENSION_COPIA}"), ("Todos", "*.*")])
-        if not ruta:
-            return
-        frase = dialogos.pedir_frase(self, "Restaurar llave",
-                                     "Escriba la frase de paso de la copia.", confirmar=False)
-        if not frase:
-            return
-        try:
-            version = self.registro.restaurar_copia(Path(ruta).read_bytes(), frase)
-        except (cifrado.ErrorCifrado, OSError) as e:
-            self._error(e)
-            return
-        self.refrescar()
-        messagebox.showinfo(TITULO, f"Llave maestra restaurada (versión {version}).")
-
-    def respaldo_completo(self) -> None:
-        carpeta = filedialog.askdirectory(
-            title="Carpeta donde guardar el respaldo (base de clientes + copia de la llave)")
-        if not carpeta:
-            return
-        frase = dialogos.pedir_frase(
-            self, "Respaldo completo",
-            "El respaldo incluye la base de clientes y la copia de la llave cifrada con esta "
-            "frase. Ninguno de los dos sirve sin el otro.", confirmar=True)
-        if not frase:
-            return
-        destino = Path(carpeta) / f"ComprobantesSRI-respaldo-{datetime.now():%Y%m%d-%H%M}"
-        try:
-            destino.mkdir(parents=True, exist_ok=False)
-            copia = self.registro.exportar_copia(frase)
-            db.respaldar(destino / db.NOMBRE_DB)
-            plataforma.escribir_atomico(destino / f"llave{cifrado.EXTENSION_COPIA}", copia)
-            plataforma.restringir_permisos(destino)
-        except (OSError, cifrado.ErrorCifrado, ValueError) as e:
-            self._error(e)
-            return
-        messagebox.showinfo(TITULO, f"Respaldo guardado en:\n{destino}")
-
-    # ------------------------------------------------- importación desde .env
-    def _ofrecer_importar_env(self) -> None:
-        heredada = preferencias.clave_heredada()
-        for hijo in self.banner_env.winfo_children():
-            hijo.destroy()
-        if not heredada:
-            self.banner_env.pack_forget()
-            return
-        origen = "una variable de entorno" if heredada["origen"] == "entorno" else "el archivo .env"
-        ttk.Label(
-            self.banner_env, foreground="#b9770e", wraplength=760, justify="left",
-            text=f"⚠ Hay una clave del SRI en texto plano en {origen} (SRI_CLAVE). "
-                 "Impórtela a un cliente para guardarla cifrada.",
-        ).pack(side="left", fill="x", expand=True)
-        ttk.Button(self.banner_env, text="Importar…", command=self._tras(self.importar_env)).pack(side="right")
-        self.banner_env.pack(fill="x", padx=6, pady=4, after=self.winfo_children()[0])
-
-    def importar_env(self) -> None:
-        heredada = preferencias.clave_heredada()
-        if not heredada:
-            self._ofrecer_importar_env()
-            return
-        ruc, clave = heredada["ruc"], heredada["clave"]
-        existente = None
-        try:
-            existente = self.registro.por_identificacion(ruc) if ruc else None
-        except Exception:  # noqa: BLE001
-            pass
-        if existente is not None:
-            if not messagebox.askyesno(
-                TITULO, f"{existente.nombre} ({existente.ruc}) ya está registrado.\n"
-                        "¿Reemplazar su clave por la del .env?"):
-                return
-            try:
-                self.registro.cambiar_clave(existente.id, clave)
-            except (clientes.ErrorClientes, cifrado.ErrorCifrado) as e:
-                self._error(e)
-                return
-            self.contexto.lista_cambio()
-        elif self.nuevo(ruc=ruc, clave=clave) is None:
-            return
-        self._quitar_clave_del_env(heredada["origen"])
-        self._ofrecer_importar_env()
-
-    def _quitar_clave_del_env(self, origen: str) -> None:
-        if origen == "entorno" or not origen or not os.path.isfile(origen):
-            messagebox.showinfo(
-                TITULO, "Clave importada y cifrada.\n\nQuite la variable de entorno SRI_CLAVE "
-                        "de la configuración de su sistema: ya no es necesaria.")
-            return
-        if messagebox.askyesno(
-            TITULO, f"Clave importada y cifrada.\n\n¿Quitar ahora la línea SRI_CLAVE de\n{origen}?\n"
-                    "(El resto del archivo no se modifica.)"):
-            try:
-                preferencias.quitar_variable(origen, "SRI_CLAVE")
-            except OSError as e:
-                self._error(e)
-        else:
-            messagebox.showwarning(
-                TITULO, f"Recuerde borrar SRI_CLAVE de {origen}: sigue en texto plano.")
-
-
-def cambiar_clave_de(padre, contexto: ContextoCliente, c: clientes.Cliente) -> bool:
-    """Pide y guarda una clave nueva para ``c``. True si se cambió."""
-    clave = dialogos.pedir_clave(
-        padre, "Cambiar clave",
-        f"Nueva clave de SRI en línea para {c.nombre} ({c.ruc}).\n"
-        "La clave anterior se reemplaza y no se puede recuperar.")
-    if not clave:
-        return False
-    try:
-        contexto.registro.cambiar_clave(c.id, clave)
-    except (clientes.ErrorClientes, cifrado.ErrorCifrado) as e:
-        messagebox.showerror(TITULO, str(e))
-        return False
-    contexto.lista_cambio()
-    messagebox.showinfo(TITULO, "Clave actualizada.")
-    return True
+            messagebox.showerror(TITULO, str(e))

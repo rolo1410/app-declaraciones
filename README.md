@@ -1,20 +1,20 @@
-# Comprobantes SRI — Descarga, Análisis y Declaración de IVA (Ecuador)
+# Comprobantes SRI — Declaraciones de IVA para contadores (Ecuador)
 
-Aplicación de escritorio (Windows, Linux y macOS) que integra en **una sola app con tres
-pestañas** todo el flujo de la declaración de IVA en SRI en línea (sucesor del
-Formulario 104):
+Aplicación de escritorio (Windows, Linux y macOS) para que un contador lleve la
+declaración de IVA de **varios clientes**, mes a mes, en SRI en línea (sucesor
+del Formulario 104):
 
-1. **Descarga** — descarga automatizada de los XML de comprobantes electrónicos
-   **recibidos** desde el portal [SRI en línea](https://srienlinea.sri.gob.ec)
-   (Playwright + Chrome real, supera el reCAPTCHA v3).
-2. **Análisis** — lee los XML descargados, los lista con navegación por teclado,
-   muestra los **totales del lote** (base gravada / 0 %, IVA por tarifa,
-   retenido) y **exporta a CSV/Excel**.
-3. **Declaración** — clasifica las compras (con/sin derecho a crédito) y calcula
-   los **casilleros** del formulario de IVA, con exportación a Excel y PDF.
+- **Clientes** (inicio) — la cartera con los 12 meses de cada cliente
+  (pendiente, declarada, enviada, cobrada) y, al elegir un mes, sus etapas.
+- **1 · Descarga** — descarga automatizada de los XML de comprobantes
+  electrónicos **recibidos** desde [SRI en línea](https://srienlinea.sri.gob.ec)
+  (Playwright + Chrome real, supera el reCAPTCHA v3).
+- **2 · Declaración** — clasifica las compras (con/sin derecho a crédito),
+  calcula los **casilleros** del formulario de IVA, exporta a Excel y PDF y
+  **envía el informe al cliente por correo**.
 
-El flujo natural es continuo: **Descargar → Análisis → «Enviar a Declaración»**,
-sin salir de la aplicación ni manipular archivos intermedios.
+El flujo de cada mes: **elegir cliente y mes → descargar → calcular → presentar
+en el SRI → enviar al cliente → cobrar**, sin manipular archivos intermedios.
 
 > **Importante:** los valores de la declaración son un pre-cálculo de apoyo.
 > Verifíquelos siempre contra el prellenado de SRI en línea y, en caso de duda,
@@ -76,9 +76,31 @@ python -m app.main  # equivalente, si ya activó el venv
 > Python del sistema. Con otro intérprete la descarga falla con
 > `No module named 'playwright'`.
 
-### Clientes
-La pestaña **Clientes** guarda los contribuyentes con los que trabaja: RUC,
-nombre y **clave de SRI en línea cifrada** (AES-256-GCM). La llave maestra que
+Solo se puede abrir **una ventana** de la app a la vez: si ya está abierta, un
+segundo intento la trae al frente y avisa.
+
+### Clientes (inicio)
+La app abre en **Clientes**: un cliente por fila con sus 12 meses del año.
+
+- **gris** pendiente · **naranja** declarada · **verde** enviada al cliente;
+  un **✓** dentro del cuadro indica que el mes está cobrado.
+- Un clic en un cuadro elige ese **cliente y mes de trabajo**. A la derecha, la
+  ficha muestra sus datos (editar, clave del SRI, carpeta, desactivar) y las
+  etapas del mes en orden, cada una con su estado y su botón:
+  1. **Descargar comprobantes** (cuántos XML hay) → abre «Descarga» con ese mes;
+  2. **Calcular la declaración** → abre «Declaración» con los XML del mes;
+  3. **Presentar en el SRI** → «Marcar hoy» / «Cambiar…» / «Quitar»;
+  4. **Enviar al cliente** → informe por correo (o «Abrir envío» si ya se envió);
+  5. **Cobrar** → «Marcar hoy» / «Cambiar…» / «Quitar».
+
+  Debajo, el **resumen del mes** guardado al calcular (ventas, compras,
+  impuesto generado, crédito tributario e impuesto a pagar o crédito a favor)
+  y la **fecha límite** según el noveno dígito del RUC.
+- En Descarga y Declaración, la barra superior muestra el cliente y el mes,
+  las etapas «1 Descarga · 2 Declaración» y «‹ Clientes» para volver.
+
+Cada cliente se registra con su RUC, nombre, correo y **clave de SRI en línea
+cifrada** (AES-256-GCM). La llave maestra que
 protege las claves vive en el almacén de credenciales del sistema: Administrador
 de credenciales (Windows), Llavero (macOS) o GNOME Keyring (Ubuntu). La clave
 nunca se muestra: solo se puede reemplazar.
@@ -86,7 +108,7 @@ nunca se muestra: solo se puede reemplazar.
 Al registrar un cliente se crea su carpeta:
 
 ```
-~/ComprobantesSRI/                ← ruta base (configurable en «Clientes»)
+~/ComprobantesSRI/                ← ruta base (configurable en «Configuración»)
 └── clientes/
     ├── 1712345678/               ← persona natural: su cédula
     │   ├── descargas/recibidos_2026_10_todos/
@@ -94,12 +116,10 @@ Al registrar un cliente se crea su carpeta:
     └── 1790012345001/            ← sociedad / entidad pública: su RUC
 ```
 
-El combo **Cliente** de la parte superior elige el cliente activo para todas las
-pestañas: la descarga usa su RUC, su clave y su carpeta, y al guardar o exportar
-se propone su carpeta `resultados/<AAAA-MM>/`. Con «— Sin cliente registrado —»
-la app funciona como antes (RUC, clave y carpeta a mano).
+Con un cliente elegido, la descarga usa su RUC, su clave y su carpeta, y al
+guardar o exportar se propone su carpeta `resultados/<AAAA-MM>/`.
 
-- **Copia de emergencia**: «Exportar copia de emergencia…» guarda la llave
+- **Copia de emergencia** (en «Configuración»): guarda la llave
   maestra cifrada con una frase de paso (archivo `.llave`). Guárdela **fuera del
   equipo**. Sin la llave y sin la copia, las claves guardadas se pierden y hay
   que volver a pedirlas a cada cliente. «Respaldo completo…» guarda la base de
@@ -124,7 +144,7 @@ cada actualización de la app (el acceso va ligado a la firma).
 
 ### Valores por defecto (opcional, obsoleto para la clave)
 `SRI_CLAVE` deja la clave en texto plano: es preferible registrar el cliente. Si
-la app encuentra `SRI_CLAVE`, la pestaña **Clientes** ofrece importarla cifrada y
+la app encuentra `SRI_CLAVE`, **Configuración** ofrece importarla cifrada y
 luego quitarla del `.env`.
 
 Copie `.env.example` a `.env` y complete las variables para que la pestaña
@@ -143,17 +163,14 @@ prioridad sobre el archivo.
 | `SRI_DIR` | Directorio de descarga |
 
 ### 1 · Descarga
-Con un cliente activo basta elegir el periodo y los tipos. Sin cliente,
-ingrese RUC/cédula y clave, seleccione año/mes/día y los tipos de comprobante,
-elija la carpeta de descarga e **Iniciar descarga**. Se abre una ventana de
-Chrome (modo visible) que hace todo el proceso; al terminar, la app pasa
-automáticamente a **Análisis** apuntando a la carpeta descargada.
+Con un cliente y mes elegidos, el período ya viene puesto: elija los tipos e
+**Iniciar descarga**. Sin cliente, ingrese RUC/cédula, clave, período y carpeta.
+Se abre una ventana de Chrome (modo visible) que hace todo el proceso; al
+terminar, la app pasa a **Declaración** con esos XML ya cargados.
 
-### 2 · Análisis
-Revise los comprobantes y los totales del lote. Exporte a CSV/Excel si lo desea.
-Pulse **«Enviar a Declaración ▸»** para pasar las facturas al cálculo del IVA.
-
-### 3 · Declaración
+### 2 · Declaración
+- **Cargar XML descargados…** trae los XML del cliente y mes de trabajo (o los
+  de una carpeta que elija). Al seleccionar un comprobante se ve su detalle.
 - Doble clic en una factura alterna su derecho a crédito tributario. Sugerencia
   inicial: facturas al RUC → con crédito; a la cédula → sin crédito (gasto
   personal).
@@ -174,30 +191,22 @@ Pulse **«Enviar a Declaración ▸»** para pasar las facturas al cálculo del 
   límite según el noveno dígito del RUC. Una copia del paquete queda en
   `resultados/<AAAA-MM>/envio_<fecha>/` y el envío se anota en la bitácora.
 
-### Seguimiento
-Vista de todos los clientes con sus 12 meses del año (se abre al iniciar):
-
-- **gris** pendiente · **naranja** declarada · **verde** enviada al cliente;
-  un **✓** dentro del cuadro indica que el mes está cobrado.
-- **Declarada** y **cobrada** las marca el contador con su fecha («Marcar hoy»
-  u «Otra fecha…»). **Enviada** se registra sola al enviar el informe por
-  correo; en ese formulario también se puede marcar el mes como declarado.
-- Al hacer clic en un cuadro se elige ese cliente y se ve el **resumen del mes**
-  (ventas, compras, impuesto generado, crédito tributario e impuesto a pagar
-  o crédito a favor, guardados al calcular la declaración), sus fechas y el
-  historial del cliente.
-
 ### Configuración
+Formulario modal (botón «Configuración» arriba a la derecha, ⌘, en macOS o
+«Clientes → Configuración…»):
+
 - **Quien prepara la declaración:** nombre o estudio, cédula/RUC, cargo,
   n.º de registro, contacto y logo. Van al pie del PDF y a la firma del correo.
 - **Correo de envío (SMTP):** proveedor (Gmail, Outlook, Yahoo, Zoho u otro),
   usuario y contraseña. Gmail y Outlook exigen una *contraseña de aplicación*.
   La contraseña se guarda cifrada con la llave maestra (como las claves del
   SRI) y no se vuelve a mostrar. «Probar conexión» inicia sesión sin enviar nada.
-- Se abre también con ⌘, (macOS) o desde el menú «Ir».
+- **Archivos y seguridad:** ruta base de los archivos, estado de la llave
+  maestra, copia de emergencia, restaurar, respaldo completo e importación de
+  `SRI_CLAVE` del `.env`.
 
 También puede alimentar la declaración con un **archivo TXT de «Recibidos»**
-(botón «Cargar archivo Recibidos (TXT)…») si prefiere ese flujo.
+(botón «Cargar TXT de Recibidos…») si prefiere ese flujo.
 
 ## Uso — línea de comandos (declaración desde TXT)
 
@@ -266,18 +275,16 @@ app/
     informe.py            Paquete para el cliente (PDF, Excel, XML) y texto del correo
     correo.py             Envío por SMTP
   gui/
-    main_window.py        Ventana: selector de cliente + pestañas
-    contexto.py           Cliente activo compartido por las pestañas
-    selector_cliente.py   Combo «Cliente» global
+    main_window.py        Ventana: barra superior + páginas; una sola instancia
+    navegacion.py         Barra superior y contenedor de páginas
+    contexto.py           Cliente y mes de trabajo compartidos por las páginas
+    acciones_clientes.py  Acciones sobre clientes, llave maestra y ruta base
     dialogos.py           Formularios modales (cliente, clave, frase, envío)
-    pestana_clientes.py   Pestaña Clientes
-    pestana_descarga.py   Pestaña 1 · Descarga
-    pestana_analisis.py   Pestaña 2 · Análisis
-    pestana_declaracion.py Pestaña 3 · Declaración (incluye el envío por correo)
-    pestana_configuracion.py Pestaña Configuración
-    pestana_seguimiento.py Seguimiento: clientes × 12 meses y resumen de cada mes
+    pestana_clientes.py   Inicio: cuadrícula de clientes × 12 meses y ficha del mes
+    pestana_descarga.py   1 · Descarga
+    pestana_declaracion.py 2 · Declaración (incluye el envío por correo)
+    pestana_configuracion.py Configuración (formulario modal)
     menu_principal.py     Barra de menús (Clientes, Ir, Ventana)
-    barra_lateral.py      Navegación lateral (pasos del mes, Clientes, Configuración)
     recursos.py           Utilidades de recursos e imágenes
   export/                 Reportes Excel (openpyxl) y PDF (reportlab)
 tests/                    Pruebas unitarias (pytest)

@@ -124,3 +124,21 @@ def test_candado_se_puede_reusar(tmp_path):
         pass
     with c:
         pass
+
+
+def test_una_sola_ventana_de_la_app(monkeypatch):
+    """Con la app ya abierta (candado tomado) no se crea otra ventana."""
+    from app.core import plataforma
+    from app.gui import main_window
+
+    avisos = []
+    monkeypatch.setattr(main_window, "_avisar_ya_abierta", lambda: avisos.append(True))
+    monkeypatch.setattr(main_window, "App", lambda: (_ for _ in ()).throw(
+        AssertionError("no debía abrir otra ventana")))
+    abierta = plataforma.candado_app()
+    abierta.adquirir()
+    try:
+        assert main_window.ejecutar_gui() is False
+        assert avisos == [True]
+    finally:
+        abierta.liberar()

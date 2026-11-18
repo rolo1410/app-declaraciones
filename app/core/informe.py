@@ -80,6 +80,23 @@ def xml_de_comprobantes(carpeta: Path, claves: set[str]) -> list[Path]:
     return list(encontrados.values())
 
 
+def carpetas_de_descarga(descargas: Path, periodo: str) -> list[Path]:
+    """Subcarpetas de ``descargas`` del ``periodo`` (``<tipo>_<AAAA>_<MM>_<día>``),
+    de la más reciente a la más antigua."""
+    try:
+        anio, mes = periodo.split("-")
+    except ValueError:
+        return []
+    if not descargas.is_dir():
+        return []
+    carpetas = [c for c in descargas.glob(f"*_{anio}_{mes}_*") if c.is_dir()]
+    return sorted(carpetas, key=lambda c: c.stat().st_mtime, reverse=True)
+
+
+def contar_xml(carpetas: list[Path]) -> int:
+    return sum(1 for c in carpetas for _ in c.glob("*.xml"))
+
+
 def comprimir(archivos: list[Path], destino: Path) -> Path:
     """Zip con los archivos (nombres repetidos se numeran)."""
     usados: set[str] = set()

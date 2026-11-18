@@ -1,7 +1,8 @@
-"""Pestaña 3 — Declaración de IVA: clasificación de compras y casilleros calculados.
+"""Página 2 — Declaración de IVA: clasificación de compras y casilleros calculados.
 
-Se alimenta de los comprobantes analizados en la pestaña «Análisis» (XML del SRI)
-o, alternativamente, de un archivo TXT de «Recibidos» descargado del portal.
+Se alimenta de los XML descargados del SRI (los del cliente y mes de trabajo,
+o una carpeta elegida) o, alternativamente, de un archivo TXT de «Recibidos».
+Al seleccionar un comprobante se ve su detalle.
 """
 from __future__ import annotations
 
@@ -43,8 +44,10 @@ class PestanaDeclaracion(ttk.Frame):
     def _construir(self) -> None:
         barra = ttk.Frame(self)
         barra.pack(fill="x", pady=(0, 6))
-        ttk.Button(barra, text="Cargar archivo Recibidos (TXT)…",
-                   command=self.cargar_txt).pack(side="left")
+        ttk.Button(barra, text="Cargar XML descargados…",
+                   command=tras_el_clic(self, self.cargar_xml)).pack(side="left")
+        ttk.Button(barra, text="Cargar TXT de Recibidos…",
+                   command=self.cargar_txt).pack(side="left", padx=(6, 0))
         ttk.Button(barra, text="Abrir trabajo…",
                    command=self.abrir_trabajo).pack(side="left", padx=(6, 0))
         ttk.Button(barra, text="Guardar trabajo…",
@@ -54,7 +57,7 @@ class PestanaDeclaracion(ttk.Frame):
         self.combo_periodo.pack(side="left")
         self.combo_periodo.bind("<<ComboboxSelected>>", lambda _e: self.refrescar_tabla())
         self.etiqueta_origen = ttk.Label(
-            barra, text="Sin datos. Envíe comprobantes desde «Análisis» o cargue un TXT.",
+            barra, text="Sin datos. Cargue los XML descargados del mes o un TXT.",
             foreground="gray")
         self.etiqueta_origen.pack(side="left", padx=12)
 
@@ -236,18 +239,92 @@ class PestanaDeclaracion(ttk.Frame):
                 TITULO, "Advertencias:\n\n" + "\n".join(self.advertencias[:20]))
         self.refrescar_tabla()
 
-    def cargar_desde_analisis(self, comps_xml: "list[az.Comprobante]") -> None:
-        """Recibe los comprobantes analizados (XML) desde la pestaña «Análisis»."""
+    # ------------------------------------------------- carga de XML del mes
+    def _carpetas_del_mes(self) -> list:
+        from ..core import informe
+
+        if self.contexto is None or self.contexto.cliente is None or not self.contexto.periodo:
+            return []
+        try:
+            descargas = self.contexto.registro.carpeta_descargas(self.contexto.cliente)
+        except Exception:  # noqa: BLE001
+            return []
+        return informe.carpetas_de_descarga(descargas, self.contexto.periodo)
+
+    def cargar_xml(self) -> None:
+        """XML descargados del cliente y mes de trabajo; si no hay, se elige una carpeta."""
+        carpetas = self._carpetas_del_mes()
+        if carpetas:
+            self.cargar_carpetas_xml([str(c) for c in carpetas], self.contexto.periodo)
+            return
+        inicial = None
+        if self.contexto is not None and self.contexto.cliente is not None:
+            inicial = self.contexto.carpeta_descargas()
+        carpeta = filedialog.askdirectory(title="Carpeta con los XML de comprobantes",
+                                          initialdir=str(inicial) if inicial else None)
+        if carpeta:
+            self.cargar_carpetas_xml([carpeta])
+
+    def cargar_carpetas_xml(self, carpetas: list[str], periodo: str = "") -> None:
+        """Lee (en segundo plano) los XML de ``carpetas`` y los carga en la declaración."""
+        import threading
+
+        rutas = [r for c in carpetas for r in az.listar_xmls(c)]
+        if not rutas:
+            messagebox.showinfo(TITULO, "No se encontraron archivos .xml en la carpeta.")
+            return
+        self.etiqueta_origen.configure(text=f"Leyendo {len(rutas)} XML…")
+        resultado: dict = {}
+
+        def trabajo() -> None:
+            vistos, comps = set(), []
+            for ruta in rutas:
+                comp = az.parsear_comprobante(ruta)
+                clave = getattr(comp, "clave_acceso", "") or ruta
+                if clave in vistos:
+                    continue  # el mismo comprobante descargado dos veces
+                vistos.add(clave)
+                comps.append(comp)
+            resultado["comps"] = comps
+
+        hilo = threading.Thread(target=trabajo, daemon=True)
+        hilo.start()
+
+        def esperar() -> None:
+            if hilo.is_alive():
+                self.after(100, esperar)
+                return
+            validos = [c for c in resultado.get("comps", []) if not c.error]
+            if not validos:
+                self.etiqueta_origen.configure(text="Ningún XML válido en la carpeta.")
+                messagebox.showinfo(TITULO, "Los XML de la carpeta tienen errores o están vacíos.")
+                return
+            cliente = self.contexto.cliente if self.contexto is not None else None
+            ruc = cliente.ruc if cliente is not None else self.ruc
+            self.cargar_desde_analisis(validos, ruc=ruc, periodo=periodo)
+
+        esperar()
+
+    def elegir_periodo(self, periodo: str | None) -> None:
+        """Muestra el ``periodo`` si los comprobantes cargados lo incluyen."""
+        if periodo and periodo in (self.combo_periodo.cget("values") or ()):
+            self.combo_periodo.set(periodo)
+            self.refrescar_tabla()
+
+    def cargar_desde_analisis(self, comps_xml: "list[az.Comprobante]", ruc: str | None = None,
+                              periodo: str = "") -> None:
+        """Carga comprobantes leídos de XML (descarga del SRI o carpeta elegida)."""
         res = adaptador.adaptar_comprobantes(comps_xml)
         if not res.comprobantes:
             messagebox.showinfo(
                 TITULO, "Los comprobantes analizados no incluyen compras declarables "
                         "(pueden ser solo retenciones o XML con error).")
             return
-        origen = "Análisis de XML"
+        origen = "XML descargados"
         if res.ignorados:
             origen += f" ({res.ignorados} no declarable/s omitido/s)"
-        self._establecer_comprobantes(res.comprobantes, res.advertencias, self.ruc, origen)
+        self._establecer_comprobantes(res.comprobantes, res.advertencias, ruc or self.ruc, origen,
+                                      periodo=periodo)
 
     def cargar_txt(self) -> None:
         ruta = filedialog.askopenfilename(
@@ -594,7 +671,7 @@ class PestanaDeclaracion(ttk.Frame):
 
     def calcular(self) -> None:
         if not self.comprobantes:
-            messagebox.showinfo(TITULO, "Primero envíe comprobantes desde «Análisis» o cargue un TXT.")
+            messagebox.showinfo(TITULO, "Primero cargue los XML descargados del mes o un TXT.")
             return
         try:
             ventas = self._leer_decimal("ventas", "Ventas brutas IVA ≠0%")
