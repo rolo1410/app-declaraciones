@@ -5,6 +5,8 @@ import pytest
 
 tk = pytest.importorskip("tkinter")
 
+pytestmark = pytest.mark.gui
+
 
 @pytest.fixture
 def app(tmp_path, monkeypatch):

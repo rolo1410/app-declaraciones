@@ -60,7 +60,19 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: python -m pytest tests/ -q
+      - name: Pruebas
+        if: runner.os != 'macOS'
+        run: python -m pytest tests/ -q
+      # En macOS, Tk (aqua) puede colgarse o cerrarse con «Segmentation fault» si
+      # en un mismo proceso se crean y destruyen varias ventanas raíz: las
+      # pruebas de interfaz (marca «gui») corren cada una en su propio proceso.
+      - name: Pruebas (macOS, interfaz en procesos separados)
+        if: runner.os == 'macOS'
+        run: |
+          python -m pytest tests/ -q -m "not gui"
+          for prueba in $(python -m pytest tests/ -q -m gui --collect-only | grep "::"); do
+            python -m pytest -q -p no:cacheprovider "$prueba"
+          done
 
   compilar:
     # Solo Linux y Windows: son las plataformas que se pueden distribuir sin

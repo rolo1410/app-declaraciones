@@ -10,6 +10,15 @@ import pytest
 from keyring.backend import KeyringBackend
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "gui: crea ventanas Tk. En macOS conviene correrlas cada una en su propio "
+        "proceso (Tk aqua falla al crear y destruir varias raíces en uno): "
+        "pytest -m 'not gui' y luego cada prueba gui por separado (ver CI).",
+    )
+
+
 class LlaveroMemoria(KeyringBackend):
     priority = 1  # type: ignore[assignment]
 

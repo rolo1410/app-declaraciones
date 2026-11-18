@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import sys
 
+import pytest
+
 from app.gui.dialogos import tipos_archivo
 
 TIPOS = (("Trabajo", "*.iva.json"), ("JSON", "*.json"), ("Todos", "*.*"))
@@ -18,6 +20,7 @@ def test_en_otros_sistemas_no_cambia(monkeypatch):
     assert tipos_archivo(*TIPOS) == list(TIPOS)
 
 
+@pytest.mark.gui
 def test_dialogo_dentro_de_la_ventana_bloquea_el_menu_y_se_limpia():
     import pytest
 
@@ -64,6 +67,7 @@ def test_dialogo_dentro_de_la_ventana_bloquea_el_menu_y_se_limpia():
         raiz.destroy()
 
 
+@pytest.mark.gui
 def test_solo_un_formulario_modal_a_la_vez():
     import pytest
 
