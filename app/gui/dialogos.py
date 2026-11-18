@@ -4,6 +4,7 @@ Ninguno muestra una clave ya guardada: solo permiten escribir una nueva.
 """
 from __future__ import annotations
 
+import sys
 import tkinter as tk
 from tkinter import ttk
 
@@ -188,3 +189,24 @@ def pedir_clave(padre, titulo: str, texto: str) -> str | None:
 
 def pedir_frase(padre, titulo: str, texto: str, confirmar: bool) -> str | None:
     return DialogoFrase(padre, titulo, texto, confirmar).mostrar()
+
+
+def tipos_archivo(*tipos: tuple[str, str]) -> list[tuple[str, str]]:
+    """``filetypes`` seguros para los diálogos de archivo de Tk.
+
+    En macOS, Tk 8.6 traduce cada extensión a un tipo del sistema y, con una
+    extensión doble como ``*.iva.json``, obtiene ``nil`` y la app se cierra
+    (NSInvalidArgumentException). Allí se filtra solo por la última extensión
+    (``*.json``) y se quitan los patrones repetidos que eso produce.
+    """
+    if sys.platform != "darwin":
+        return list(tipos)
+    vistos: set[str] = set()
+    seguros = []
+    for nombre, patron in tipos:
+        if patron.startswith("*.") and patron.count(".") > 1:
+            patron = "*." + patron.rsplit(".", 1)[1]
+        if patron not in vistos:
+            vistos.add(patron)
+            seguros.append((nombre, patron))
+    return seguros

@@ -213,7 +213,7 @@ En local, `./build.sh` compila para el sistema donde se ejecuta (en macOS genera
 ```
 launcher.py               Punto de entrada del ejecutable (imports absolutos)
 comprobantes_sri.spec     Configuración de PyInstaller
-assets/                   Íconos y marca de agua
+assets/                   Íconos (.icns, .ico, .png); fuentes/ tiene los SVG originales
 app/
   main.py                 CLI (declaración desde TXT) + GUI + --selftest
   core/

@@ -14,6 +14,7 @@ from tkinter import filedialog, font, messagebox, ttk
 from ..core import adaptador, calculadora, clasificador, parser, sesion
 from ..core import analizador as az
 from ..core.models import Comprobante, Declaracion
+from .dialogos import tipos_archivo
 
 TITULO = "Declaración de IVA — SRI Ecuador"
 
@@ -269,7 +270,8 @@ class PestanaDeclaracion(ttk.Frame):
             defaultextension=sesion.EXTENSION,
             initialfile=f"declaracion_{periodo}{sesion.EXTENSION}",
             initialdir=str(carpeta) if carpeta else None,
-            filetypes=[("Trabajo de declaración", f"*{sesion.EXTENSION}"), ("Todos", "*.*")],
+            filetypes=tipos_archivo(("Trabajo de declaración", f"*{sesion.EXTENSION}"),
+                                    ("Todos", "*.*")),
         )
         if not ruta:
             return
@@ -294,8 +296,8 @@ class PestanaDeclaracion(ttk.Frame):
         ruta = filedialog.askopenfilename(
             title="Abrir trabajo de la declaración",
             initialdir=str(carpeta) if carpeta else None,
-            filetypes=[("Trabajo de declaración", f"*{sesion.EXTENSION}"),
-                       ("JSON", "*.json"), ("Todos", "*.*")],
+            filetypes=tipos_archivo(("Trabajo de declaración", f"*{sesion.EXTENSION}"),
+                                    ("JSON", "*.json"), ("Todos", "*.*")),
         )
         if not ruta:
             return
@@ -648,7 +650,7 @@ class PestanaDeclaracion(ttk.Frame):
             initialdir=str(carpeta) if carpeta else None,
             defaultextension=extension,
             initialfile=f"declaracion_iva_{self.declaracion.periodo}{extension}",
-            filetypes=[(extension.upper().strip("."), f"*{extension}")],
+            filetypes=tipos_archivo((extension.upper().strip("."), f"*{extension}")),
         )
         if not ruta:
             return

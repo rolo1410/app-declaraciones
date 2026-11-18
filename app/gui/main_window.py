@@ -19,6 +19,7 @@ from .pestana_analisis import PestanaAnalisis
 from .pestana_clientes import PestanaClientes
 from .pestana_declaracion import PestanaDeclaracion
 from .pestana_descarga import PestanaDescarga
+from .recursos import poner_icono
 from .selector_cliente import SelectorCliente
 
 TITULO = "Comprobantes SRI — Descarga, Análisis y Declaración de IVA"
@@ -30,6 +31,7 @@ class App(tk.Tk):
         self.title(TITULO)
         self.geometry("1180x760")
         self.minsize(980, 640)
+        poner_icono(self)
 
         # Cliente activo compartido por todas las pestañas.
         self.contexto = ContextoCliente(self)

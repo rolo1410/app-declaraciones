@@ -9,6 +9,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from ..core import analizador as az
 from .contexto import periodo_mayoritario
+from .dialogos import tipos_archivo
 from .recursos import fmt
 
 
@@ -296,7 +297,7 @@ class PestanaAnalisis(ttk.Frame):
             title=titulo, defaultextension=f".{ext}",
             initialfile=self._nombre_sugerido(ext),
             initialdir=str(carpeta) if carpeta else None,
-            filetypes=[(tipo, f"*.{ext}")],
+            filetypes=tipos_archivo((tipo, f"*.{ext}")),
         )
 
     def _registrar(self, ruta: str) -> None:

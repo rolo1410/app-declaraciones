@@ -68,3 +68,10 @@ def test_atajo_deshabilitado_no_hace_nada(app):
     indice = m.i_activo[2]  # Abrir carpeta del cliente
     m._invocar(m.m_clientes, indice)
     assert llamado == []
+
+
+def test_iconos_presentes():
+    from app.gui.recursos import ruta_asset
+
+    for nombre in ("icon.png", "icon_ventana.png", "icon.icns", "icon.ico"):
+        assert ruta_asset(nombre).is_file(), nombre
