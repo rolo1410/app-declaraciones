@@ -27,15 +27,20 @@ ES_MAC = sys.platform == "darwin"
 
 
 def _paleta(raiz) -> dict[str, str]:
-    """Colores de la barra: del sistema en macOS (siguen el modo claro/oscuro)."""
+    """Colores de la barra: del sistema en macOS (siguen el modo claro/oscuro).
+
+    La página activa se marca con un gris suave, como la barra lateral de
+    Finder; el paso del mouse, con un gris aún más tenue.
+    """
     fondo = ttk.Style(raiz).lookup("TFrame", "background") or "#ececec"
     if ES_MAC:
         return {"fondo": "systemWindowBackgroundColor", "texto": "systemTextColor",
-                "secundario": "#8e8e93", "hover": "systemWindowBackgroundColor2",
-                "sel_fondo": "systemSelectedContentBackgroundColor", "sel_texto": "#ffffff",
+                "secundario": "#8e8e93", "hover": "systemWindowBackgroundColor1",
+                "sel_fondo": "systemUnemphasizedSelectedContentBackgroundColor",
+                "sel_texto": "systemTextColor",
                 "linea": "systemWindowBackgroundColor3"}
-    return {"fondo": fondo, "texto": "#1f2328", "secundario": "#6b7280", "hover": "#dcdfe3",
-            "sel_fondo": "#2f6fde", "sel_texto": "#ffffff", "linea": "#c8ccd1"}
+    return {"fondo": fondo, "texto": "#1f2328", "secundario": "#6b7280", "hover": "#e4e6e9",
+            "sel_fondo": "#d5d8dc", "sel_texto": "#1f2328", "linea": "#c8ccd1"}
 
 
 @dataclass
@@ -52,7 +57,7 @@ class _Item(tk.Frame):
     """Fila clicable de la barra: número (opcional) + nombre."""
 
     def __init__(self, master, pagina: Pagina, colores: dict, al_elegir) -> None:
-        super().__init__(master, background=colores["fondo"], cursor="hand2")
+        super().__init__(master, background=colores["fondo"])
         self.pagina, self.colores, self._sel, self._hover = pagina, colores, False, False
         base = font.nametofont("TkDefaultFont")
         tamano = base.actual("size") + (1 if ES_MAC else 0)
@@ -80,7 +85,7 @@ class _Item(tk.Frame):
     def _pintar(self) -> None:
         c = self.colores
         if self._sel:
-            fondo, texto, num = c["sel_fondo"], c["sel_texto"], c["sel_texto"]
+            fondo, texto, num = c["sel_fondo"], c["sel_texto"], c["secundario"]
         else:
             fondo = c["hover"] if self._hover else c["fondo"]
             texto, num = c["texto"], c["secundario"]
