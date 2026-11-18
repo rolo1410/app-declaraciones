@@ -1,7 +1,7 @@
 name: Compilar ejecutables
 
 on:
-  workflow_dispatch:       # botón "Run workflow" en la pestaña Actions (respaldo manual)
+  workflow_dispatch:       # botón "Run workflow" (respaldo manual; fuera de main solo corre las pruebas)
     inputs:
       forzar:
         description: "Compilar aunque el código no haya cambiado"
@@ -79,6 +79,9 @@ jobs:
     # certificado de firma/notarización de Apple.
     name: Ejecutable (${{ matrix.nombre }})
     needs: pruebas
+    # Los ejecutables (artifacts) se construyen SOLO desde main. Una ejecución
+    # manual desde otra rama corre únicamente las pruebas.
+    if: github.ref == 'refs/heads/main'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
