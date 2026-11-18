@@ -1,7 +1,7 @@
 name: Compilar ejecutables
 
 on:
-  workflow_dispatch:       # botón "Run workflow" en la pestaña Actions (respaldo manual)
+  workflow_dispatch:       # botón "Run workflow" (respaldo manual; fuera de main solo corre las pruebas)
     inputs:
       forzar:
         description: "Compilar aunque el código no haya cambiado"
@@ -37,7 +37,7 @@ jobs:
             echo "Sin commit anterior de referencia; se compila."
             echo "construir=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          if git diff --quiet "$ANTERIOR" HEAD -- app launcher.py assets requirements.txt comprobantes_sri.spec .github/workflows/build.yml; then
+          if git diff --quiet "$ANTERIOR" HEAD -- app launcher.py assets requirements.txt comprobantes_sri.spec instalador .github/workflows/build.yml; then
             echo "Sin cambios en el código desde $ANTERIOR; se omite la compilación."
             echo "construir=false" >> "$GITHUB_OUTPUT"
           else
@@ -79,6 +79,9 @@ jobs:
     # certificado de firma/notarización de Apple.
     name: Ejecutable (${{ matrix.nombre }})
     needs: pruebas
+    # Los ejecutables (artifacts) se construyen SOLO desde main. Una ejecución
+    # manual desde otra rama corre únicamente las pruebas.
+    if: github.ref == 'refs/heads/main'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -132,6 +135,21 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path "dist/ComprobantesSRI" -DestinationPath "dist/ComprobantesSRI-windows.zip" -Force
 
+      # Instalador (Inno Setup): un único ComprobantesSRI-Setup.exe para usuarios
+      # que no saben descomprimir. Abrir el .exe desde dentro del zip falla con
+      # «Failed to load Python DLL» porque Windows no copia la carpeta _internal.
+      - name: Instalador (Windows)
+        if: matrix.nombre == 'windows'
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+          & $iscc "/DAppVersion=1.0.${{ github.run_number }}" "instalador\ComprobantesSRI.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-Item "dist/ComprobantesSRI-Setup.exe"
+
       # En Linux se usa tar.gz: zip no conserva el bit de ejecución del binario.
       - name: Empaquetar (Linux)
         if: matrix.nombre == 'linux'
@@ -141,6 +159,7 @@ jobs:
         with:
           name: ComprobantesSRI-${{ matrix.nombre }}
           path: |
+            dist/ComprobantesSRI-Setup.exe
             dist/ComprobantesSRI-windows.zip
             dist/ComprobantesSRI-linux.tar.gz
           if-no-files-found: error
@@ -169,11 +188,13 @@ jobs:
             Ejecutables generados automáticamente desde el último merge a main.
             Este Release se actualiza en cada merge.
 
-            - `ComprobantesSRI-windows.zip` — descomprima la carpeta completa y ejecute `ComprobantesSRI.exe`.
+            - **`ComprobantesSRI-Setup.exe` — instalador de Windows (recomendado).** Doble clic y «Siguiente»; no pide administrador. Si aparece «Windows protegió su PC», pulse «Más información» → «Ejecutar de todas formas».
+            - `ComprobantesSRI-windows.zip` — versión portable: use «Extraer todo» y ejecute `ComprobantesSRI.exe` desde la carpeta extraída (no desde dentro del zip).
             - `ComprobantesSRI-linux.tar.gz` — `tar -xzf` y ejecute `ComprobantesSRI/ComprobantesSRI`.
 
             Requisito en la máquina destino: tener Google Chrome instalado (pestaña Descarga).
           prerelease: true
           files: |
+            binarios/ComprobantesSRI-Setup.exe
             binarios/ComprobantesSRI-windows.zip
             binarios/ComprobantesSRI-linux.tar.gz
