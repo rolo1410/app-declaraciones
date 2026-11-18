@@ -293,6 +293,9 @@ class PestanaDescarga(ttk.Frame):
             return False
         return True
 
+    def descargando(self) -> bool:
+        return bool(self._worker and self._worker.is_alive())
+
     def _iniciar(self) -> None:
         if self._worker and self._worker.is_alive():
             return

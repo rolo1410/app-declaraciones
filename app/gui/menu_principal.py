@@ -1,6 +1,6 @@
 """Barra de menús de la ventana principal.
 
-    Clientes   Ir
+    Clientes   Ir   Ventana
 
 «Clientes» reúne todo lo que se hace con el registro de contribuyentes: alta,
 cambio de cliente activo, acciones sobre el cliente activo (clave, nombre,
@@ -62,6 +62,7 @@ class MenuPrincipal:
         self.barra = tk.Menu(raiz)
         self._menu_clientes()
         self._menu_ir(pestanas)
+        self._menu_ventana()
         raiz.configure(menu=self.barra)
 
         contexto.al_cambiar_cliente(self.actualizar)
@@ -139,6 +140,26 @@ class MenuPrincipal:
         for n, (etiqueta, accion) in enumerate(pestanas):
             self._agregar(m, etiqueta, accion, str(n))
         self.barra.add_cascade(label="Ir", menu=m)
+
+    def _menu_ventana(self) -> None:
+        # En macOS el menú llamado «window» recibe además Minimizar/Zoom nativos.
+        m = tk.Menu(self.barra, tearoff=False, name="window" if ES_MAC else None)
+        texto, evento = _atajo("w")
+        m.add_command(label="Cerrar ventana", accelerator=texto,
+                      command=tras_el_clic(self.raiz, self.cerrar_ventana))
+        # ⌘W funciona también con un diálogo abierto (el menú queda deshabilitado).
+        self.raiz.bind_all(evento, lambda _e: (self.cerrar_ventana(), "break")[1])
+        self.barra.add_cascade(label="Ventana", menu=m)
+
+    def cerrar_ventana(self) -> None:
+        """⌘W: cancela el diálogo abierto o, si no hay ninguno, cierra la app."""
+        pila = getattr(self.raiz, "pila_dialogos", [])
+        if pila:
+            pila[-1].cancelar()
+        elif hasattr(self.raiz, "cerrar"):
+            self.raiz.cerrar()
+        else:
+            self.raiz.destroy()
 
     # ------------------------------------------------------------------ estado
     def actualizar(self) -> None:

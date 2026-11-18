@@ -75,3 +75,18 @@ def test_iconos_presentes():
 
     for nombre in ("icon.png", "icon_ventana.png", "icon.icns", "icon.ico"):
         assert ruta_asset(nombre).is_file(), nombre
+
+
+def test_cmd_w_cancela_el_dialogo_y_luego_cierra(app, monkeypatch):
+    from app.gui.dialogos import DialogoTexto
+
+    cerrada = []
+    monkeypatch.setattr(app, "destroy", lambda: cerrada.append(True))
+    resultado = {}
+    dialogo = DialogoTexto(app, "Prueba", "x", "y")
+    app.after(50, app.menu.cerrar_ventana)
+    resultado["dialogo"] = dialogo.mostrar()
+    assert resultado["dialogo"] is None and cerrada == []
+
+    app.menu.cerrar_ventana()
+    assert cerrada == [True]

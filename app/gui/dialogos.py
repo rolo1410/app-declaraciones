@@ -12,34 +12,64 @@ from ..core import cifrado
 from ..core import ruc as ruc_mod
 
 
-class _Dialogo(ttk.Frame):
-    """Base de los diálogos: una tarjeta dentro de la ventana principal.
+# Opacidad del velo que atenúa la ventana principal detrás del diálogo.
+OPACIDAD_VELO = 0.38
+# macOS y Windows componen ventanas translúcidas siempre; en Linux depende del
+# escritorio (sin compositor el velo sería negro opaco), así que allí el
+# diálogo se dibuja dentro de la ventana principal.
+FLOTANTE = sys.platform in ("darwin", "win32")
 
-    No se usa una ventana aparte (``Toplevel``): en macOS, con Tk 8.6, arrastrar
-    un diálogo modal lo devolvía a su sitio o dejaba el cursor ocupado y el
-    formulario sin responder. Aquí el diálogo cubre toda la ventana principal
-    (nada debajo recibe clics), se centra como una tarjeta y es modal a su
-    modo: el menú queda deshabilitado y Tab recorre solo sus campos.
+
+class _Dialogo(ttk.Frame):
+    """Base de los diálogos modales, «dentro» de la ventana principal.
+
+    Con ``FLOTANTE``: un velo translúcido (ventana sin borde) cubre el
+    contenido de la ventana principal y la atenúa; encima, otra ventana sin
+    borde con el formulario, centrada. Ninguna se puede arrastrar, y ambas
+    siguen a la ventana principal si se mueve o cambia de tamaño. Sin
+    ``FLOTANTE``: una cubierta opaca dentro de la propia ventana.
+
+    En ambos casos es modal: el velo no deja hacer clic debajo, el menú y sus
+    atajos se deshabilitan, Tab recorre solo los campos del diálogo, Enter
+    acepta y Escape cancela. No se usa ``grab`` ni ``transient``: en macOS
+    con Tk 8.6 dejaban el diálogo sin responder o lo devolvían a su sitio.
     """
 
     def __init__(self, padre, titulo: str) -> None:
         raiz = padre.winfo_toplevel()
-        super().__init__(raiz)
         self._raiz = raiz
+        self._velo: tk.Toplevel | None = None
+        if FLOTANTE:
+            self._velo = tk.Toplevel(raiz, background="#000000")
+            self._velo.withdraw()
+            self._velo.overrideredirect(True)
+            try:
+                self._velo.attributes("-alpha", OPACIDAD_VELO)
+            except tk.TclError:
+                pass
+            self._caja = tk.Toplevel(raiz, background=_color_borde(raiz))
+            self._caja.withdraw()
+            self._caja.overrideredirect(True)
+            super().__init__(self._caja, padding=(20, 14, 20, 18))
+            self.pack(padx=1, pady=1)  # 1 px de borde con el fondo de la caja
+        else:
+            self._caja = ttk.Frame(raiz)  # cubierta opaca de toda la ventana
+            borde = tk.Frame(self._caja, background=_color_borde(raiz))
+            borde.place(relx=0.5, rely=0.42, anchor="center")
+            super().__init__(borde, padding=(20, 14, 20, 18))
+            self.pack(padx=1, pady=1)
         self.resultado = None
         self._menu_previo: list[tuple[tk.Menu, int, str]] = []
         self._abierto = False
+        self._cerrando = False
+        self._enlaces_raiz: list[tuple[str, str]] = []
 
-        tarjeta = ttk.Labelframe(self, text=f"  {titulo}  ", padding=(18, 12, 18, 16),
-                                 style="Dialogo.TLabelframe")
-        tarjeta.place(relx=0.5, rely=0.42, anchor="center")
-        self.cuerpo = ttk.Frame(tarjeta)
+        tamano = 15 if sys.platform == "darwin" else 12
+        ttk.Label(self, text=titulo, font=("TkDefaultFont", tamano, "bold")).pack(
+            anchor="w")
+        ttk.Separator(self).pack(fill="x", pady=(8, 12))
+        self.cuerpo = ttk.Frame(self)
         self.cuerpo.pack(fill="both", expand=True)
-        estilo = ttk.Style(raiz)
-        negrita = ("TkDefaultFont", 14, "bold") if sys.platform == "darwin" \
-            else ("TkDefaultFont", 11, "bold")
-        estilo.configure("Dialogo.TLabelframe.Label", font=negrita)
-
 
     def _botones(self, fila: int, texto_ok: str = "Aceptar") -> None:
         barra = ttk.Frame(self.cuerpo)
@@ -79,23 +109,52 @@ class _Dialogo(ttk.Frame):
     def _contiene(self, w) -> bool:
         return str(w).startswith(str(self) + ".")
 
-    # Las teclas se enlazan a la ventana principal (no a cada campo) para que
-    # funcionen aunque el foco haya quedado debajo de la cubierta. Con diálogos
-    # anidados manda el de arriba de la pila.
+    # Las teclas se enlazan a la ventana del diálogo y a la principal, para que
+    # funcionen aunque el foco haya quedado debajo. Con diálogos anidados manda
+    # el de arriba de la pila.
     _TECLAS = ("<Escape>", "<Return>", "<KP_Enter>", "<Tab>", "<Shift-Tab>", "<ISO_Left_Tab>")
 
     def _instalar_teclas(self) -> None:
-        r = self._raiz
-        r.bind("<Escape>", lambda _e: (self.cancelar(), "break")[1])
-        r.bind("<Return>", self._enter)
-        r.bind("<KP_Enter>", self._enter)
-        r.bind("<Tab>", lambda e: self._ciclar(e, 1))
-        for seq in ("<Shift-Tab>", "<ISO_Left_Tab>"):
-            r.bind(seq, lambda e: self._ciclar(e, -1))
+        destinos = [self._raiz] + ([self._caja] if FLOTANTE else [])
+        for r in destinos:
+            r.bind("<Escape>", lambda _e: (self.cancelar(), "break")[1])
+            r.bind("<Return>", self._enter)
+            r.bind("<KP_Enter>", self._enter)
+            r.bind("<Tab>", lambda e: self._ciclar(e, 1))
+            for seq in ("<Shift-Tab>", "<ISO_Left_Tab>"):
+                r.bind(seq, lambda e: self._ciclar(e, -1))
 
     def _quitar_teclas(self) -> None:
         for seq in self._TECLAS:
             self._raiz.unbind(seq)
+
+    # -- velo flotante -------------------------------------------------------------
+    def _ubicar(self, _evento=None) -> None:
+        """Ajusta velo y formulario a la posición actual de la ventana principal."""
+        if self._cerrando or not self.winfo_exists():
+            return
+        r = self._raiz
+        x, y, ancho, alto = r.winfo_rootx(), r.winfo_rooty(), r.winfo_width(), r.winfo_height()
+        if self._velo is not None:
+            self._velo.geometry(f"{ancho}x{alto}+{x}+{y}")
+        self._caja.update_idletasks()
+        cx = x + (ancho - self._caja.winfo_reqwidth()) // 2
+        cy = y + int((alto - self._caja.winfo_reqheight()) * 0.4)
+        self._caja.geometry(f"+{max(cx, 0)}+{max(cy, 0)}")
+
+    def _al_frente(self, _evento=None) -> None:
+        """Si se activa la ventana principal, el velo y el diálogo vuelven encima."""
+        if self._cerrando or self._pila()[-1:] != [self]:
+            return
+        if self._velo is not None:
+            self._velo.lift()
+        self._caja.lift()
+        actual = self.focus_get()
+        if actual is None or not self._contiene(actual):
+            (self._enfocables() or [self])[0].focus_force()
+
+    def _enlazar_raiz(self, secuencia: str, funcion) -> None:
+        self._enlaces_raiz.append((secuencia, self._raiz.bind(secuencia, funcion, add="+")))
 
     # -- mostrar / cerrar ----------------------------------------------------------
     def _bloquear_menu(self) -> None:
@@ -118,14 +177,28 @@ class _Dialogo(ttk.Frame):
         self._menu_previo.clear()
 
     def mostrar(self):
-        self.place(relx=0, rely=0, relwidth=1, relheight=1)
-        self.lift()
         self._abierto = True
         pila = self._pila()
         pila.append(self)
         self._raiz.dialogos_abiertos = len(pila)
         self._bloquear_menu()
         self._instalar_teclas()
+        if FLOTANTE:
+            self._ubicar()
+            self._velo.deiconify()
+            self._caja.deiconify()
+            self._velo.lift()
+            self._caja.lift()
+            # Un clic en el velo devuelve el foco al formulario.
+            self._velo.bind("<ButtonPress>", self._al_frente)
+            # En macOS la posición de la ventana principal se actualiza después
+            # del evento: se recalcula un instante más tarde.
+            self._enlazar_raiz("<Configure>", lambda e: self.after(15, self._ubicar)
+                               if e.widget is self._raiz else None)
+            self._enlazar_raiz("<FocusIn>", lambda _e: self.after_idle(self._al_frente))
+        else:
+            self._caja.place(relx=0, rely=0, relwidth=1, relheight=1)
+            self._caja.lift()
         self.update_idletasks()
         actual = self.focus_get()
         foco = actual if actual is not None and self._contiene(actual) else None
@@ -139,9 +212,16 @@ class _Dialogo(ttk.Frame):
         return self._raiz.pila_dialogos
 
     def destroy(self) -> None:
+        if self._cerrando:  # llamado de nuevo al destruir la caja que lo contiene
+            super().destroy()
+            return
+        self._cerrando = True
         if self._abierto:
             self._abierto = False
             self._restaurar_menu()
+            for secuencia, funcid in self._enlaces_raiz:
+                _desenlazar(self._raiz, secuencia, funcid)
+            self._enlaces_raiz.clear()
             pila = self._pila()
             if self in pila:
                 pila.remove(self)
@@ -150,7 +230,18 @@ class _Dialogo(ttk.Frame):
                 pila[-1]._instalar_teclas()
             else:
                 self._quitar_teclas()
-        super().destroy()
+        for contenedor in (self._caja, self._velo):
+            if contenedor is not None:
+                try:
+                    contenedor.destroy()
+                except tk.TclError:
+                    pass
+        try:
+            super().destroy()
+        except tk.TclError:
+            pass
+        if self._pila():
+            self._pila()[-1].after_idle(self._pila()[-1]._al_frente)
 
     def error(self, texto: str) -> None:
         self.lbl_error.configure(text=texto)
@@ -161,6 +252,28 @@ class _Dialogo(ttk.Frame):
     def cancelar(self) -> None:
         self.resultado = None
         self.destroy()
+
+
+def _color_borde(raiz) -> str:
+    """Color del borde de 1 px del formulario, según el tema del sistema."""
+    for color in ("systemSeparatorColor", "#8a8a8a"):
+        try:
+            raiz.winfo_rgb(color)
+            return color
+        except tk.TclError:
+            continue
+    return "#8a8a8a"
+
+
+def _desenlazar(widget, secuencia: str, funcid: str) -> None:
+    """Quita solo el enlace ``funcid`` (``unbind`` de Python < 3.13 quita todos)."""
+    try:
+        actual = widget.bind(secuencia)
+        restantes = [linea for linea in actual.split("\n") if funcid not in linea]
+        widget.bind(secuencia, "\n".join(restantes))
+        widget.deletecommand(funcid)
+    except tk.TclError:
+        pass
 
 
 def tras_el_clic(widget, accion):

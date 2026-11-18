@@ -11,7 +11,7 @@ import os
 import platform
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 from .contexto import ContextoCliente
 from .menu_principal import MenuPrincipal
@@ -63,6 +63,12 @@ class App(tk.Tk):
             ("3 · Declaración", lambda: notebook.select(self.pestana_declaracion)),
         ])
 
+        # Cerrar (botón de la ventana, ⌘W y ⌘Q) pasa por cerrar(): avisa si hay
+        # una descarga en curso.
+        self.protocol("WM_DELETE_WINDOW", self.cerrar)
+        if platform.system() == "Darwin":
+            self.createcommand("tk::mac::Quit", self.cerrar)
+
         # En macOS, una app lanzada fuera de un bundle .app no se activa sola:
         # el primer clic solo enfoca la ventana en vez de accionar el control.
         # Traerla al frente y darle foco evita esa sensación de "no hace clic".
@@ -73,6 +79,17 @@ class App(tk.Tk):
         if ultimo is not None:
             ctx.fijar(ultimo)
         notebook.select(self.pestana_descarga)
+
+    def cerrar(self) -> None:
+        if getattr(self, "pila_dialogos", None):
+            self.pila_dialogos[-1].cancelar()
+            return
+        if self.pestana_descarga.descargando() and not messagebox.askyesno(
+            "Cerrar",
+            "Hay una descarga en curso. Si cierra la app se interrumpe.\n\n¿Cerrar de todos modos?",
+        ):
+            return
+        self.destroy()
 
     def _ir_a_clientes(self) -> None:
         self.notebook.select(self.pestana_clientes)
