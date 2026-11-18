@@ -144,7 +144,13 @@ class PestanaDeclaracion(ttk.Frame):
         panel = ttk.Frame(marco, padding=(12, 0, 0, 0))
         panel.pack(side="left", fill="y")
 
-        acciones = ttk.LabelFrame(panel, text="Clasificación", padding=8)
+        # Acción principal anclada al pie: siempre visible aunque la ventana sea baja.
+        self.etiqueta_totales = ttk.Label(panel, text="", justify="left")
+        self.etiqueta_totales.pack(side="bottom", anchor="w")
+        ttk.Button(panel, text="Calcular declaración ▸", default="active",
+                   command=self.calcular).pack(side="bottom", fill="x", pady=(10, 6))
+
+        acciones = ttk.LabelFrame(panel, text="Clasificación de compras", padding=8)
         acciones.pack(fill="x", pady=(0, 10))
         ttk.Button(acciones, text="Sugerencia RUC/cédula",
                    command=self.aplicar_sugerencia).pack(fill="x", pady=2)
@@ -157,29 +163,25 @@ class PestanaDeclaracion(ttk.Frame):
         ttk.Button(acciones, text="✘ Todo sin crédito",
                    command=lambda: self.marcar_emisor(False)).pack(fill="x", pady=2)
 
-        ventas = ttk.LabelFrame(panel, text="Ventas del período (prellenado SRI)", padding=8)
+        ventas = ttk.LabelFrame(panel, text="Ventas del mes (prellenado SRI)", padding=8)
         ventas.pack(fill="x")
+        ventas.columnconfigure(0, weight=1)
         self.entradas: dict[str, tk.Entry] = {}
         campos = [
-            ("ventas", "Ventas brutas IVA ≠0% (401)", "0"),
-            ("ventas_cero", "Ventas brutas IVA 0% sin crédito (403)", "0"),
-            ("ventas_cero_credito", "Ventas brutas IVA 0% con crédito (405)", "0"),
+            ("ventas", "Brutas IVA ≠0% (401)", "0"),
+            ("ventas_cero", "Brutas 0% sin crédito (403)", "0"),
+            ("ventas_cero_credito", "Brutas 0% con crédito (405)", "0"),
             ("notas_credito", "Notas de crédito emitidas", "0"),
-            ("c483", "Impuesto meses anteriores (483)", "0"),
+            ("c483", "Meses anteriores (483)", "0"),
             ("emitidos", "Comprobantes emitidos (111)", "0"),
             ("anulados", "Comprobantes anulados (113)", "0"),
         ]
-        for clave, etiqueta, inicial in campos:
-            ttk.Label(ventas, text=etiqueta).pack(anchor="w")
-            entrada = ttk.Entry(ventas, width=18)
+        for fila, (clave, etiqueta, inicial) in enumerate(campos):
+            ttk.Label(ventas, text=etiqueta).grid(row=fila, column=0, sticky="w", pady=3)
+            entrada = ttk.Entry(ventas, width=10, justify="right")
             entrada.insert(0, inicial)
-            entrada.pack(anchor="w", pady=(0, 6))
+            entrada.grid(row=fila, column=1, sticky="e", padx=(8, 0), pady=3)
             self.entradas[clave] = entrada
-
-        ttk.Button(panel, text="Calcular declaración ▸",
-                   command=self.calcular).pack(fill="x", pady=12)
-        self.etiqueta_totales = ttk.Label(panel, text="", justify="left")
-        self.etiqueta_totales.pack(anchor="w")
 
     def _construir_pestania_formulario(self) -> None:
         marco = self.pestania_formulario
