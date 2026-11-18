@@ -108,3 +108,27 @@ def test_configuracion_guarda_perfil_y_contrasena_cifrada(app):
         "smtp.office365.com", 587, "starttls")
     assert cfg._vars["clave"].get() == ""  # la contraseña no queda en pantalla
     assert app.contexto.registro.clave_smtp() == "app-pass"
+
+
+def test_seguimiento_clic_en_un_mes_muestra_su_resumen(app):
+    from app.gui import pestana_seguimiento as ps
+
+    reg = app.contexto.registro
+    c = reg.crear_cliente("1790011674001", "Empresa", "x")
+    reg.guardar_resumen(c.id, "2026-07", {"impuesto_generado": "150", "credito_tributario": "20",
+                                          "impuesto_a_pagar": "130", "credito_a_favor": "0",
+                                          "ventas": "1000", "compras": "140", "comprobantes": 3},
+                        "2026-08-12 10:00")
+    reg.marcar(c.id, "2026-07", "declarada", "2026-08-12")
+    seg = app.pestana_seguimiento
+    seg.anio = 2026
+    app.contexto.lista_cambio()
+    app.update()
+    x = ps.X_MESES + 6 * ps.PASO + 4
+    y = ps.ALTO_CABECERA + ps.ALTO_FILA / 2
+    seg._clic(type("E", (), {"x": x, "y": y})())
+    assert app.contexto.cliente.id == c.id
+    assert seg.lbl_mes.cget("text") == "Julio 2026"
+    textos = [w.cget("text") for w in seg.frm_resumen.winfo_children()]
+    assert "Impuesto a pagar" in textos and "$ 130.00" in textos
+    assert seg.lbl_chip.cget("text") == "Declarada"

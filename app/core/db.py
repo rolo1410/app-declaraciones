@@ -80,6 +80,25 @@ MIGRACIONES: list[str] = [
       actualizado_en  TEXT NOT NULL
     );
     """,
+    # v2 -> v3: seguimiento mensual por cliente (declarada / enviada / cobrada).
+    # Las fechas son locales: AAAA-MM-DD (enviada_en lleva además la hora).
+    """
+    CREATE TABLE declaraciones (
+      id              INTEGER PRIMARY KEY,
+      id_cliente      INTEGER NOT NULL REFERENCES clientes(id),
+      periodo         TEXT NOT NULL
+                      CHECK (periodo GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]'),
+      declarada_en    TEXT,
+      enviada_en      TEXT,
+      envios          INTEGER NOT NULL DEFAULT 0 CHECK (envios >= 0),
+      cobrada_en      TEXT,
+      calculada_en    TEXT,
+      resumen         TEXT,          -- JSON con los totales del último cálculo
+      carpeta_envio   TEXT,          -- ruta relativa a la base del último envío
+      actualizado_en  TEXT NOT NULL,
+      UNIQUE (id_cliente, periodo)
+    );
+    """,
 ]
 
 VERSION_ESQUEMA = len(MIGRACIONES)

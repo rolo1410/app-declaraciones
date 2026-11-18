@@ -518,7 +518,8 @@ class DialogoEnvio(_Dialogo):
     """Destinatarios, asunto, mensaje y adjuntos del envío de la declaración."""
 
     def __init__(self, padre, *, para: str, asunto: str, cuerpo: str, xml_encontrados: int,
-                 xml_esperados: int, correo_guardado: str | None) -> None:
+                 xml_esperados: int, correo_guardado: str | None, mes: str = "",
+                 ya_declarada: bool = True) -> None:
         super().__init__(padre, "Enviar declaración al cliente")
         c = self.cuerpo
         c.columnconfigure(1, weight=1)
@@ -570,7 +571,12 @@ class DialogoEnvio(_Dialogo):
                       text=("No se encontraron en la carpeta de descargas del cliente los XML "
                             f"de {xml_esperados - xml_encontrados} comprobante(s) del período "
                             "(p. ej. si se cargaron desde el TXT).")).pack(anchor="w", pady=(2, 0))
-        self._botones(6, "Enviar")
+        self.var_declarada = tk.BooleanVar(value=False)
+        if not ya_declarada:
+            ttk.Checkbutton(c, variable=self.var_declarada,
+                            text=f"Ya la presenté en el SRI: marcar {mes} como declarada hoy").grid(
+                row=5, column=1, sticky="w", padx=8, pady=(10, 0))
+        self._botones(7, "Enviar")
         self.ent_para.focus_set()
 
     def _ver_guardar(self) -> None:
@@ -600,6 +606,7 @@ class DialogoEnvio(_Dialogo):
             "cuerpo": self.txt.get("1.0", "end-1c"),
             "pdf": self.var_pdf.get(), "excel": self.var_excel.get(), "xml": self.var_xml.get(),
             "guardar_correo": self.var_guardar.get() and para != self._correo_guardado,
+            "marcar_declarada": self.var_declarada.get(),
         }
         self.destroy()
 
@@ -614,6 +621,46 @@ def pedir_datos_cliente(padre, cliente, enfocar_correo: bool = False):
     if enfocar_correo:
         dialogo.ent_correo.focus_set()
     return dialogo.mostrar()
+
+
+class DialogoFecha(_Dialogo):
+    """Fecha en formato dd/mm/aaaa; devuelve ``AAAA-MM-DD``."""
+
+    def __init__(self, padre, titulo: str, texto: str, inicial: str | None = None) -> None:
+        from datetime import date
+
+        super().__init__(padre, titulo)
+        ttk.Label(self.cuerpo, text=texto, wraplength=380, justify="left").grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        try:
+            valor = date.fromisoformat(inicial) if inicial else date.today()
+        except ValueError:
+            valor = date.today()
+        ttk.Label(self.cuerpo, text="Fecha (dd/mm/aaaa):").grid(row=1, column=0, sticky="w")
+        self.var = tk.StringVar(value=f"{valor:%d/%m/%Y}")
+        entrada = ttk.Entry(self.cuerpo, textvariable=self.var, width=14)
+        entrada.grid(row=1, column=1, sticky="w", padx=8)
+        entrada.select_range(0, "end")
+        entrada.focus_set()
+        self._botones(3, "Guardar")
+
+    def aceptar(self) -> None:
+        from datetime import date, datetime
+
+        try:
+            valor = datetime.strptime(self.var.get().strip(), "%d/%m/%Y").date()
+        except ValueError:
+            self.error("Escriba la fecha como dd/mm/aaaa, p. ej. 12/08/2026.")
+            return
+        if valor > date.today():
+            self.error("La fecha no puede ser futura.")
+            return
+        self.resultado = valor.isoformat()
+        self.destroy()
+
+
+def pedir_fecha(padre, titulo: str, texto: str, inicial: str | None = None) -> str | None:
+    return DialogoFecha(padre, titulo, texto, inicial).mostrar()
 
 
 def pedir_texto(padre, titulo: str, texto: str, inicial: str = "") -> str | None:

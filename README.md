@@ -174,6 +174,19 @@ Pulse **«Enviar a Declaración ▸»** para pasar las facturas al cálculo del 
   límite según el noveno dígito del RUC. Una copia del paquete queda en
   `resultados/<AAAA-MM>/envio_<fecha>/` y el envío se anota en la bitácora.
 
+### Seguimiento
+Vista de todos los clientes con sus 12 meses del año (se abre al iniciar):
+
+- **gris** pendiente · **naranja** declarada · **verde** enviada al cliente;
+  un **✓** dentro del cuadro indica que el mes está cobrado.
+- **Declarada** y **cobrada** las marca el contador con su fecha («Marcar hoy»
+  u «Otra fecha…»). **Enviada** se registra sola al enviar el informe por
+  correo; en ese formulario también se puede marcar el mes como declarado.
+- Al hacer clic en un cuadro se elige ese cliente y se ve el **resumen del mes**
+  (ventas, compras, impuesto generado, crédito tributario e impuesto a pagar
+  o crédito a favor, guardados al calcular la declaración), sus fechas y el
+  historial del cliente.
+
 ### Configuración
 - **Quien prepara la declaración:** nombre o estudio, cédula/RUC, cargo,
   n.º de registro, contacto y logo. Van al pie del PDF y a la firma del correo.
@@ -262,6 +275,7 @@ app/
     pestana_analisis.py   Pestaña 2 · Análisis
     pestana_declaracion.py Pestaña 3 · Declaración (incluye el envío por correo)
     pestana_configuracion.py Pestaña Configuración
+    pestana_seguimiento.py Seguimiento: clientes × 12 meses y resumen de cada mes
     menu_principal.py     Barra de menús (Clientes, Ir, Ventana)
     barra_lateral.py      Navegación lateral (pasos del mes, Clientes, Configuración)
     recursos.py           Utilidades de recursos e imágenes

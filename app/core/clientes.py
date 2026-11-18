@@ -12,6 +12,7 @@ del login, y nunca se escribe en la bitácora ni en mensajes de error.
 """
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import sqlite3
@@ -84,6 +85,55 @@ class Cliente:
             actualizado_en=fila["actualizado_en"],
             correo=fila["correo"] if "correo" in fila.keys() else None,
         )
+
+
+@dataclass(frozen=True)
+class EstadoMes:
+    """Seguimiento de la declaración de un cliente en un período (``AAAA-MM``)."""
+    periodo: str
+    declarada_en: str | None = None   # AAAA-MM-DD
+    enviada_en: str | None = None     # AAAA-MM-DD HH:MM (último envío)
+    envios: int = 0
+    cobrada_en: str | None = None     # AAAA-MM-DD
+    calculada_en: str | None = None   # AAAA-MM-DD HH:MM
+    resumen: dict | None = None       # totales del último cálculo (ver guardar_resumen)
+    carpeta_envio: str | None = None  # relativa a la ruta base
+
+    @property
+    def estado(self) -> str:
+        """``'enviada'``, ``'declarada'`` o ``'pendiente'`` (color del cuadro)."""
+        if self.enviada_en:
+            return "enviada"
+        if self.declarada_en:
+            return "declarada"
+        return "pendiente"
+
+    @property
+    def cobrada(self) -> bool:
+        return bool(self.cobrada_en)
+
+
+_PERIODO = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+_FECHA = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _validar_periodo(periodo: str) -> str:
+    if not _PERIODO.match(periodo or ""):
+        raise ErrorClientes(f"Período no válido: «{periodo}» (se espera AAAA-MM).")
+    return periodo
+
+
+def _validar_fecha(fecha: str | None) -> str | None:
+    if fecha is None:
+        return None
+    from datetime import date as _date
+    try:
+        if not _FECHA.match(fecha):
+            raise ValueError
+        _date.fromisoformat(fecha)
+    except ValueError:
+        raise ErrorClientes(f"Fecha no válida: «{fecha}».") from None
+    return fecha
 
 
 class Registro:
@@ -384,6 +434,89 @@ class Registro:
         with self._abrir() as cx, db.transaccion(cx):
             cx.execute("DELETE FROM secretos WHERE nombre = 'smtp'")
             db.registrar(cx, "clave_correo_borrada")
+
+    # -- seguimiento mensual ----------------------------------------------------------
+
+    _CAMPOS_FECHA = {"declarada": "declarada_en", "cobrada": "cobrada_en"}
+
+    def estados_del_anio(self, anio: int) -> dict[int, dict[int, EstadoMes]]:
+        """``{id_cliente: {mes: EstadoMes}}`` de los períodos con algún registro."""
+        resultado: dict[int, dict[int, EstadoMes]] = {}
+        with self._abrir() as cx:
+            filas = cx.execute(
+                "SELECT * FROM declaraciones WHERE periodo LIKE ?", (f"{anio:04d}-%",))
+            for f in filas:
+                resultado.setdefault(f["id_cliente"], {})[int(f["periodo"][5:7])] = \
+                    self._estado_de_fila(f)
+        return resultado
+
+    def estado_mes(self, id_cliente: int, periodo: str) -> EstadoMes:
+        _validar_periodo(periodo)
+        with self._abrir() as cx:
+            fila = cx.execute("SELECT * FROM declaraciones WHERE id_cliente = ? AND periodo = ?",
+                              (id_cliente, periodo)).fetchone()
+        return self._estado_de_fila(fila) if fila else EstadoMes(periodo)
+
+    def historial(self, id_cliente: int) -> list[EstadoMes]:
+        """Todos los períodos registrados del cliente, del más reciente al más antiguo."""
+        with self._abrir() as cx:
+            filas = cx.execute("SELECT * FROM declaraciones WHERE id_cliente = ?"
+                               " ORDER BY periodo DESC", (id_cliente,)).fetchall()
+        return [self._estado_de_fila(f) for f in filas]
+
+    @staticmethod
+    def _estado_de_fila(f) -> EstadoMes:
+        try:
+            resumen = json.loads(f["resumen"]) if f["resumen"] else None
+        except ValueError:
+            resumen = None
+        return EstadoMes(f["periodo"], f["declarada_en"], f["enviada_en"], f["envios"],
+                         f["cobrada_en"], f["calculada_en"], resumen, f["carpeta_envio"])
+
+    def guardar_resumen(self, id_cliente: int, periodo: str, resumen: dict, cuando: str) -> None:
+        """Guarda los totales del último cálculo de la declaración del período.
+
+        ``resumen``: valores simples (texto o número), p. ej. impuesto generado,
+        crédito tributario, impuesto a pagar, crédito a favor y n.º de comprobantes.
+        """
+        datos = json.dumps(resumen, ensure_ascii=False, default=str)
+        with self._abrir() as cx, db.transaccion(cx):
+            self._asegurar_periodo(cx, id_cliente, periodo)
+            cx.execute("UPDATE declaraciones SET resumen = ?, calculada_en = ?,"
+                       " actualizado_en = ? WHERE id_cliente = ? AND periodo = ?",
+                       (datos, cuando, db.ahora_iso(), id_cliente, periodo))
+
+    def _asegurar_periodo(self, cx, id_cliente: int, periodo: str) -> None:
+        self._obtener(cx, id_cliente)
+        cx.execute("INSERT INTO declaraciones (id_cliente, periodo, actualizado_en)"
+                   " VALUES (?, ?, ?) ON CONFLICT (id_cliente, periodo) DO NOTHING",
+                   (id_cliente, _validar_periodo(periodo), db.ahora_iso()))
+
+    def marcar(self, id_cliente: int, periodo: str, que: str, fecha: str | None) -> EstadoMes:
+        """Marca (``fecha`` AAAA-MM-DD) o desmarca (``None``) ``que``: declarada | cobrada."""
+        campo = self._CAMPOS_FECHA.get(que)
+        if campo is None:
+            raise ErrorClientes(f"Marca desconocida: {que}")
+        fecha = _validar_fecha(fecha)
+        with self._abrir() as cx, db.transaccion(cx):
+            self._asegurar_periodo(cx, id_cliente, periodo)
+            cx.execute(f"UPDATE declaraciones SET {campo} = ?, actualizado_en = ?"
+                       " WHERE id_cliente = ? AND periodo = ?",
+                       (fecha, db.ahora_iso(), id_cliente, periodo))
+            accion = f"{que}_marcada" if fecha else f"{que}_desmarcada"
+            db.registrar(cx, accion, id_cliente, f"periodo={periodo}")
+        return self.estado_mes(id_cliente, periodo)
+
+    def registrar_envio(self, id_cliente: int, periodo: str, cuando: str,
+                        carpeta: str | None = None) -> EstadoMes:
+        """Anota un envío por correo del informe (``cuando``: AAAA-MM-DD HH:MM)."""
+        with self._abrir() as cx, db.transaccion(cx):
+            self._asegurar_periodo(cx, id_cliente, periodo)
+            cx.execute("UPDATE declaraciones SET enviada_en = ?, envios = envios + 1,"
+                       " carpeta_envio = coalesce(?, carpeta_envio), actualizado_en = ?"
+                       " WHERE id_cliente = ? AND periodo = ?",
+                       (cuando, carpeta, db.ahora_iso(), id_cliente, periodo))
+        return self.estado_mes(id_cliente, periodo)
 
     def fijar_activo(self, id_cliente: int, activo: bool) -> None:
         """Desactiva o reactiva un cliente (nunca se borra: quedan archivos y bitácora)."""

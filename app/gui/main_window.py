@@ -21,6 +21,7 @@ from .pestana_clientes import PestanaClientes
 from .pestana_configuracion import PestanaConfiguracion
 from .pestana_declaracion import PestanaDeclaracion
 from .pestana_descarga import PestanaDescarga
+from .pestana_seguimiento import PestanaSeguimiento
 from .recursos import poner_icono
 from .barra_lateral import Navegacion, Pagina
 from .selector_cliente import SelectorCliente
@@ -32,8 +33,12 @@ class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(TITULO)
-        self.geometry("1180x760")
-        self.minsize(980, 640)
+        # Grande si la pantalla lo permite: la cuadrícula de Seguimiento y el
+        # panel del mes caben lado a lado desde ~1260 px.
+        ancho = min(1360, self.winfo_screenwidth() - 80)
+        alto = min(840, self.winfo_screenheight() - 120)
+        self.geometry(f"{max(ancho, 1260)}x{max(alto, 700)}")
+        self.minsize(1260, 640)
         poner_icono(self)
 
         # Cliente activo compartido por todas las páginas.
@@ -58,6 +63,8 @@ class App(tk.Tk):
         separador.configure(background=nav.colores["linea"])
 
         # Las páginas se crean en orden de flujo y se enlazan entre sí.
+        self.pestana_seguimiento = PestanaSeguimiento(
+            notebook, ctx, on_ir_declaracion=lambda: notebook.select(self.pestana_declaracion))
         self.pestana_clientes = PestanaClientes(notebook, ctx)
         self.pestana_configuracion = PestanaConfiguracion(notebook, ctx)
         self.pestana_declaracion = PestanaDeclaracion(
@@ -67,6 +74,9 @@ class App(tk.Tk):
         self.pestana_descarga = PestanaDescarga(
             notebook, on_descarga_completa=self._descarga_completa, contexto=ctx)
 
+        nav.agregar(Pagina(self.pestana_seguimiento, "Seguimiento",
+                           "Cada cliente y sus 12 meses: declarada, enviada y cobrada. "
+                           "Haga clic en un mes para ver su resumen."))
         trabajo = "Trabajo del mes"
         nav.agregar(Pagina(self.pestana_descarga, "Descarga",
                            "Descarga del SRI los comprobantes del período.", "1", trabajo))
@@ -84,10 +94,11 @@ class App(tk.Tk):
 
         # Barra de menús: «Clientes» (gestión del registro) e «Ir» (pestañas).
         self.menu = MenuPrincipal(self, ctx, self.pestana_clientes, [
-            ("Clientes", self._ir_a_clientes),
+            ("Seguimiento", lambda: notebook.select(self.pestana_seguimiento)),
             ("1 · Descarga", lambda: notebook.select(self.pestana_descarga)),
             ("2 · Análisis", lambda: notebook.select(self.pestana_analisis)),
             ("3 · Declaración", lambda: notebook.select(self.pestana_declaracion)),
+            ("Clientes", self._ir_a_clientes),
             ("Configuración", self._ir_a_configuracion),
         ])
 
@@ -104,11 +115,12 @@ class App(tk.Tk):
         # Traerla al frente y darle foco evita esa sensación de "no hace clic".
         self.after(200, self._traer_al_frente)
 
-        # Retomar el último cliente usado. Se abre en «Descarga», como antes.
+        # Retomar el último cliente usado. Se abre en «Seguimiento»: la vista de
+        # todos los clientes del contador.
         ultimo = ctx.ultimo_cliente()
         if ultimo is not None:
             ctx.fijar(ultimo)
-        notebook.select(self.pestana_descarga)
+        notebook.select(self.pestana_seguimiento)
 
     def cerrar(self) -> None:
         if getattr(self, "pila_dialogos", None):

@@ -623,6 +623,41 @@ class PestanaDeclaracion(ttk.Frame):
         )
         self._mostrar_formulario()
         self.cuaderno.select(self.pestania_formulario)
+        self._guardar_resumen_del_mes()
+
+    def _cliente_del_trabajo(self):
+        """Cliente activo si el trabajo es suyo (o no se sabe de quién es)."""
+        if self.contexto is None or self.contexto.cliente is None:
+            return None
+        cliente = self.contexto.cliente
+        if self.ruc and self.ruc not in cliente.identificaciones:
+            return None
+        return cliente
+
+    def _guardar_resumen_del_mes(self) -> None:
+        """Deja el resumen del cálculo en el seguimiento mensual del cliente."""
+        from datetime import datetime
+
+        cliente = self._cliente_del_trabajo()
+        if cliente is None or self.declaracion is None:
+            return
+        d = self.declaracion
+        r = d.resumen
+        resumen = {
+            "impuesto_generado": str(r.impuesto_generado),
+            "credito_tributario": str(r.credito_tributario),
+            "impuesto_a_pagar": str(r.impuesto_a_pagar),
+            "credito_a_favor": str(r.credito_a_favor),
+            "ventas": str(d.ventas.c409),
+            "compras": str(d.compras.c509),
+            "comprobantes": len(calculadora.filtrar_periodo(self.comprobantes, d.periodo)),
+        }
+        try:
+            self.contexto.registro.guardar_resumen(
+                cliente.id, d.periodo, resumen, f"{datetime.now():%Y-%m-%d %H:%M}")
+            self.contexto.seguimiento_cambio()
+        except Exception:  # noqa: BLE001 - el seguimiento nunca debe impedir el trabajo
+            pass
 
     def _mostrar_formulario(self) -> None:
         declaracion = self.declaracion
@@ -734,6 +769,8 @@ class PestanaDeclaracion(ttk.Frame):
             cuerpo=informe.cuerpo(declaracion, cliente.nombre, cliente.ruc, ajustes.declarante),
             xml_encontrados=len(xml), xml_esperados=len(claves),
             correo_guardado=cliente.correo,
+            mes=informe.nombre_periodo(declaracion.periodo),
+            ya_declarada=bool(registro.estado_mes(cliente.id, declaracion.periodo).declarada_en),
         )
         if not datos:
             return
@@ -771,9 +808,11 @@ class PestanaDeclaracion(ttk.Frame):
         except Exception as e:  # noqa: BLE001
             messagebox.showerror(TITULO, str(e))
             return
-        self._enviar_en_segundo_plano(ajustes, clave, datos, paquete)
+        self._enviar_en_segundo_plano(ajustes, clave, datos, paquete,
+                                      cliente.id, declaracion.periodo)
 
-    def _enviar_en_segundo_plano(self, ajustes, clave: str, datos: dict, paquete) -> None:
+    def _enviar_en_segundo_plano(self, ajustes, clave: str, datos: dict, paquete,
+                                 id_cliente: int, periodo: str) -> None:
         import threading
 
         from ..core import correo
@@ -810,6 +849,7 @@ class PestanaDeclaracion(ttk.Frame):
             destinatarios = correo.lista_correos(datos["para"])
             rechazados = resultado.get("rechazados") or []
             self._registrar_envio(paquete, len(destinatarios) - len(rechazados))
+            self._seguimiento_envio(id_cliente, periodo, paquete, datos.get("marcar_declarada"))
             self.lbl_envio.configure(text="✓ Enviado.", foreground="#1e8449")
             texto = (f"Declaración enviada a {datos['para']}.\n\n"
                      f"Copia del informe en:\n{paquete.carpeta}")
@@ -820,6 +860,24 @@ class PestanaDeclaracion(ttk.Frame):
                 messagebox.showinfo(TITULO, texto)
 
         esperar()
+
+    def _seguimiento_envio(self, id_cliente: int, periodo: str, paquete,
+                           marcar_declarada: bool) -> None:
+        from datetime import datetime
+
+        registro = self.contexto.registro
+        ahora = datetime.now()
+        try:
+            relativa = paquete.carpeta.resolve().relative_to(registro.base).as_posix()
+        except ValueError:
+            relativa = str(paquete.carpeta)
+        try:
+            registro.registrar_envio(id_cliente, periodo, f"{ahora:%Y-%m-%d %H:%M}", relativa)
+            if marcar_declarada:
+                registro.marcar(id_cliente, periodo, "declarada", f"{ahora:%Y-%m-%d}")
+            self.contexto.seguimiento_cambio()
+        except Exception:  # noqa: BLE001 - el correo ya salió; el seguimiento no debe fallar
+            pass
 
     def _registrar_envio(self, paquete, n_destinatarios: int) -> None:
         if self.contexto is not None:

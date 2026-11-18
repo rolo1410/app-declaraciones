@@ -32,6 +32,7 @@ class ContextoCliente:
         self.cliente: Cliente | None = None
         self._oyentes_cliente: list[Oyente] = []
         self._oyentes_lista: list[Oyente] = []
+        self._oyentes_seguimiento: list[Oyente] = []
 
     # -- suscripciones ------------------------------------------------------------
 
@@ -40,6 +41,14 @@ class ContextoCliente:
 
     def al_cambiar_lista(self, fn: Oyente) -> None:
         self._oyentes_lista.append(fn)
+
+    def al_cambiar_seguimiento(self, fn: Oyente) -> None:
+        self._oyentes_seguimiento.append(fn)
+
+    def seguimiento_cambio(self) -> None:
+        """Avisar tras calcular, enviar o marcar un mes (refresca la cuadrícula)."""
+        for fn in list(self._oyentes_seguimiento):
+            fn()
 
     def fijar(self, cliente: Cliente | None) -> None:
         self.cliente = cliente
