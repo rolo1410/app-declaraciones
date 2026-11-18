@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from . import analizador as az
-from .models import Comprobante, redondear
+from .models import Comprobante, LineaDetalle, redondear
 
 # Tipos de comprobante que sustentan adquisiciones en la declaración de IVA.
 # Se excluyen los comprobantes de retención (06/07): no son compras, son
@@ -76,6 +76,18 @@ def adaptar_comprobante(comp: az.Comprobante) -> Comprobante | None:
         iva=_a_decimal(iva),
         importe_total=_a_decimal(comp.importe_total),
         base_tarifa_cero=_a_decimal(base_cero),
+        razon_social_receptor=comp.razon_social_receptor,
+        detalles=[
+            LineaDetalle(
+                descripcion=ln.descripcion,
+                # Cantidad y precio unitario pueden traer más de 2 decimales.
+                cantidad=Decimal(str(ln.cantidad)),
+                precio_unitario=Decimal(str(ln.precio_unitario)),
+                precio_total=_a_decimal(ln.precio_total_sin_impuesto),
+                tarifa_iva=Decimal(str(ln.tarifa_iva)),
+            )
+            for ln in comp.detalles
+        ],
     )
 
 

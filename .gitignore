@@ -34,3 +34,9 @@ Thumbs.db
 # Editores
 .vscode/
 .idea/
+
+# Credenciales locales del SRI (SRI_RUC / SRI_CLAVE / SRI_DIR)
+.env
+
+# Comprobantes reales descargados del SRI (datos de contribuyentes)
+datos/

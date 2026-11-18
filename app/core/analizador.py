@@ -222,6 +222,24 @@ def desanidar_comprobante(xml_texto: str) -> str:
     return xml_texto
 
 
+def identificacion_comprador(xml_texto: str) -> str | None:
+    """Identificación del receptor (comprador o sujeto retenido) de un XML.
+
+    Devuelve ``None`` si el XML no es legible o el comprobante no la trae (p. ej.
+    una guía de remisión). Acepta el XML tal como lo entrega el SRI, envuelto en
+    ``<autorizacion>``.
+    """
+    try:
+        raiz = ET.fromstring(desanidar_comprobante(xml_texto))
+    except ET.ParseError:
+        return None
+    for campo in ("identificacionComprador", "identificacionSujetoRetenido"):
+        valor = _texto(raiz, f".//{campo}")
+        if valor:
+            return "".join(valor.split())
+    return None
+
+
 # Nodos de información de cabecera según el tipo de comprobante.
 _NODOS_INFO = (
     "infoFactura",

@@ -1,13 +1,16 @@
 """Exportación de la declaración a PDF (reportlab)."""
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.lib.utils import ImageReader
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from ..core import calculadora
 from ..core.models import Declaracion
@@ -23,10 +26,40 @@ def _texto(campo: str, valor: object) -> str:
     return str(valor)
 
 
-def exportar_pdf(declaracion: Declaracion, ruta: str) -> None:
+def _logo(ruta, alto_max: float = 18 * mm, ancho_max: float = 60 * mm):
+    """Imagen del logo escalada sin deformar, o None si no se puede leer."""
+    try:
+        ancho, alto = ImageReader(str(ruta)).getSize()
+    except Exception:  # noqa: BLE001 - un logo dañado no impide el informe
+        return None
+    escala = min(alto_max / alto, ancho_max / ancho)
+    imagen = Image(str(ruta), width=ancho * escala, height=alto * escala)
+    imagen.hAlign = "LEFT"
+    return imagen
+
+
+def exportar_pdf(declaracion: Declaracion, ruta: str, *, contribuyente: tuple[str, str] | None = None,
+                 declarante=None, logo=None) -> None:
+    """PDF de la declaración.
+
+    Opcionales para el informe que se envía al cliente: ``contribuyente``
+    (nombre, RUC), ``declarante`` (``perfil.Declarante``, va al pie como
+    «Preparado por») y ``logo`` (ruta de la imagen del encabezado).
+    """
     estilos = getSampleStyleSheet()
-    elementos = [
+    elementos = []
+    if logo:
+        imagen = _logo(logo)
+        if imagen is not None:
+            elementos += [imagen, Spacer(1, 4 * mm)]
+    elementos += [
         Paragraph(f"Declaración de IVA — período {declaracion.periodo}", estilos["Title"]),
+    ]
+    if contribuyente:
+        nombre, ruc = contribuyente
+        elementos.append(Paragraph(
+            f"<b>Contribuyente:</b> {escape(nombre)} — RUC {escape(ruc)}", estilos["Normal"]))
+    elementos += [
         Paragraph("Pre-cálculo de casilleros a partir del archivo de comprobantes recibidos del SRI.",
                   estilos["Normal"]),
         Spacer(1, 6 * mm),
@@ -80,4 +113,16 @@ def exportar_pdf(declaracion: Declaracion, ruta: str) -> None:
         for advertencia in declaracion.advertencias:
             elementos.append(Paragraph(f"• {advertencia}", estilos["Normal"]))
 
-    SimpleDocTemplate(ruta, pagesize=A4, title=f"Declaración IVA {declaracion.periodo}").build(elementos)
+    if declarante is not None and declarante.lineas_firma():
+        lineas = declarante.lineas_firma()
+        elementos += [
+            Spacer(1, 10 * mm),
+            Paragraph("Preparado por", estilos["Heading2"]),
+            Paragraph(f"<b>{escape(lineas[0])}</b>", estilos["Normal"]),
+            *(Paragraph(escape(linea), estilos["Normal"]) for linea in lineas[1:]),
+            Paragraph(f"Fecha del informe: {date.today():%d/%m/%Y}", estilos["Normal"]),
+        ]
+
+    autor = declarante.nombre if declarante is not None else ""
+    SimpleDocTemplate(ruta, pagesize=A4, title=f"Declaración IVA {declaracion.periodo}",
+                      author=autor).build(elementos)

@@ -5,5 +5,11 @@ playwright==1.60.0
 openpyxl>=3.1      # Excel (.xlsx) en Análisis y Declaración
 reportlab>=4.0     # PDF de la declaración
 
+# Registro de clientes y claves cifradas (PLAN-clientes.md)
+cryptography>=42       # AES-256-GCM
+keyring>=25            # llave maestra en el almacén del sistema (en Linux trae secretstorage + jeepney)
+platformdirs>=4        # carpetas de datos por sistema
+argon2-cffi>=23.1      # copia de emergencia de la llave (Argon2id)
+
 # Pruebas
 pytest>=8.2

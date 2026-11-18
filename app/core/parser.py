@@ -50,7 +50,7 @@ def parsear_fecha(texto: str):
 
 
 def ruc_desde_nombre_archivo(ruta: str | Path) -> str | None:
-    """Extrae el RUC del contribuyente del nombre del archivo (ej. 0603545351001_Recibidos.txt)."""
+    """Extrae el RUC del contribuyente del nombre del archivo (ej. 9999999999001_Recibidos.txt)."""
     coincidencia = re.match(r"(\d{13})_", Path(ruta).name)
     return coincidencia.group(1) if coincidencia else None
 

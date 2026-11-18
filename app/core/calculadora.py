@@ -94,13 +94,19 @@ def calcular_ventas(
     comprobantes_emitidos: int = 0,
     comprobantes_anulados: int = 0,
     tarifa: Decimal = TARIFA_IVA,
+    ventas_tarifa_cero: Decimal = Decimal("0"),
+    ventas_tarifa_cero_con_credito: Decimal = Decimal("0"),
 ) -> CasillerosVentas:
     casilleros = CasillerosVentas()
     casilleros.c401 = ventas_brutas
     casilleros.c411 = ventas_brutas - notas_credito_emitidas
     casilleros.c421 = redondear(casilleros.c411 * tarifa)
-    casilleros.c409 = casilleros.c401
-    casilleros.c419 = casilleros.c411
+    # Ventas 0 %: no generan impuesto; las notas de crédito emitidas se
+    # descuentan solo de la parte gravada (401 → 411).
+    casilleros.c403 = casilleros.c413 = ventas_tarifa_cero
+    casilleros.c405 = casilleros.c415 = ventas_tarifa_cero_con_credito
+    casilleros.c409 = casilleros.c401 + casilleros.c403 + casilleros.c405
+    casilleros.c419 = casilleros.c411 + casilleros.c413 + casilleros.c415
     casilleros.c429 = casilleros.c421
     casilleros.c482 = casilleros.c429
     casilleros.c483 = impuesto_meses_anteriores
@@ -130,6 +136,8 @@ def calcular_declaracion(
     comprobantes_emitidos: int = 0,
     comprobantes_anulados: int = 0,
     advertencias: list[str] | None = None,
+    ventas_tarifa_cero: Decimal = Decimal("0"),
+    ventas_tarifa_cero_con_credito: Decimal = Decimal("0"),
 ) -> Declaracion:
     ventas = calcular_ventas(
         ventas_brutas,
@@ -137,6 +145,8 @@ def calcular_declaracion(
         impuesto_meses_anteriores,
         comprobantes_emitidos,
         comprobantes_anulados,
+        ventas_tarifa_cero=ventas_tarifa_cero,
+        ventas_tarifa_cero_con_credito=ventas_tarifa_cero_con_credito,
     )
     compras = calcular_compras(comprobantes, periodo)
     return Declaracion(
@@ -153,6 +163,10 @@ DESCRIPCIONES = {
     "401": "Ventas locales gravadas tarifa ≠0% — valor bruto",
     "411": "Ventas locales gravadas tarifa ≠0% — valor neto",
     "421": "Impuesto generado en ventas",
+    "403": "Ventas locales tarifa 0% sin derecho a crédito tributario — bruto",
+    "413": "Ventas locales tarifa 0% sin derecho a crédito tributario — neto",
+    "405": "Ventas locales tarifa 0% con derecho a crédito tributario — bruto",
+    "415": "Ventas locales tarifa 0% con derecho a crédito tributario — neto",
     "409": "Total ventas — valor bruto",
     "419": "Total ventas — valor neto",
     "429": "Total impuesto generado",
@@ -188,6 +202,8 @@ def filas_formulario(declaracion: Declaracion) -> list[tuple[str, str, object]]:
     ventas, compras = declaracion.ventas, declaracion.compras
     valores = {
         "401": ventas.c401, "411": ventas.c411, "421": ventas.c421,
+        "403": ventas.c403, "413": ventas.c413,
+        "405": ventas.c405, "415": ventas.c415,
         "409": ventas.c409, "419": ventas.c419, "429": ventas.c429,
         "482": ventas.c482, "483": ventas.c483, "484": ventas.c484,
         "499": ventas.c499, "111": ventas.c111, "113": ventas.c113,

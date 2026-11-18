@@ -18,6 +18,8 @@ from datetime import datetime
 from app.core.sri_downloader import (
     TIPO_EMITIDOS,
     TIPO_RECIBIDOS,
+    es_error_navegador_cerrado,
+    periodo_anterior,
     DownloadConfig,
     extraer_clave_acceso,
     ruta_unica,
@@ -29,7 +31,7 @@ from app.core.sri_downloader import (
 
 def _cfg(tmp_path, **overrides) -> DownloadConfig:
     base = dict(
-        ruc="1791287541001",
+        ruc="9999999999001",
         clave="secreto",
         anio=datetime.now().year,
         mes=6,
@@ -177,3 +179,190 @@ def test_clave_ausente_devuelve_none():
 
 def test_clave_ignora_numeros_de_otra_longitud():
     assert extraer_clave_acceso("<x><claveAcceso>12345</claveAcceso></x>") is None
+
+
+@pytest.mark.parametrize(
+    "mensaje",
+    [
+        "Download.save_as: Target page, context or browser has been closed",
+        "Locator.click: Target page, context or browser has been closed",
+        "Page.goto: Target crashed",
+        "Connection closed while reading from the driver",
+    ],
+)
+def test_reconoce_navegador_cerrado(mensaje):
+    assert es_error_navegador_cerrado(mensaje)
+
+
+@pytest.mark.parametrize(
+    "mensaje",
+    [
+        "Timeout 30000ms exceeded",
+        "strict mode violation: locator resolved to 2 elements",
+        "",
+    ],
+)
+def test_otros_errores_no_son_navegador_cerrado(mensaje):
+    assert not es_error_navegador_cerrado(mensaje)
+
+
+@pytest.mark.parametrize(
+    "hoy, esperado",
+    [
+        (datetime(2026, 9, 17), (2026, 8)),
+        (datetime(2026, 3, 1), (2026, 2)),
+        (datetime(2026, 12, 31), (2026, 11)),
+        (datetime(2026, 1, 5), (2025, 12)),   # enero retrocede de año
+    ],
+)
+def test_periodo_anterior(hoy, esperado):
+    assert periodo_anterior(hoy) == esperado
+
+
+# --- clientes registrados (PLAN-clientes.md §6.4 y §7) -----------------------
+
+import contextlib  # noqa: E402
+import unicodedata  # noqa: E402
+
+from app.core import analizador  # noqa: E402
+from app.core.sri_downloader import (  # noqa: E402
+    DOMINIOS_SRI,
+    SRIDownloader,
+    comprador_ajeno,
+)
+
+
+def _xml(comprador: str | None, clave: str = "1" * 49, tag="identificacionComprador") -> str:
+    ident = f"<{tag}>{comprador}</{tag}>" if comprador else ""
+    interno = (f"<factura><infoTributaria><claveAcceso>{clave}</claveAcceso></infoTributaria>"
+               f"<infoFactura>{ident}</infoFactura></factura>")
+    return (f"<autorizacion><numeroAutorizacion>{clave}</numeroAutorizacion>"
+            f"<comprobante><![CDATA[{interno}]]></comprobante></autorizacion>")
+
+
+def test_la_clave_no_aparece_en_repr(tmp_path):
+    assert "secreto" not in repr(_cfg(tmp_path))
+
+
+@pytest.mark.parametrize("entrada,esperado", [
+    ("CON.xml", "_CON.xml"), ("con", "_con"), ("COM1.tar.gz", "_COM1.tar.gz"),
+    ("LPT9.xml", "_LPT9.xml"), ("CONSOLA.xml", "CONSOLA.xml"), ("COM10.xml", "COM10.xml"),
+])
+def test_sanitizar_nombres_reservados_windows(entrada, esperado):
+    assert sanitizar_nombre(entrada) == esperado
+
+
+def test_sanitizar_normaliza_nfc():
+    nfd = unicodedata.normalize("NFD", "año_señal.xml")
+    assert sanitizar_nombre(nfd) == unicodedata.normalize("NFC", "año_señal.xml")
+
+
+def test_sanitizar_limita_longitud_y_conserva_extension():
+    nombre = sanitizar_nombre("x" * 300 + ".xml")
+    assert len(nombre) == 100 and nombre.endswith(".xml")
+
+
+def test_identificacion_comprador():
+    assert analizador.identificacion_comprador(_xml("1710034065001")) == "1710034065001"
+    assert analizador.identificacion_comprador(
+        _xml("1790011674001", tag="identificacionSujetoRetenido")) == "1790011674001"
+    assert analizador.identificacion_comprador(_xml(None)) is None
+    assert analizador.identificacion_comprador("no es xml") is None
+
+
+@pytest.mark.parametrize("comprador,esperado", [
+    ("1710034065001", None),      # RUC del cliente
+    ("1710034065", None),         # cédula del cliente
+    (None, None),                 # sin comprador (guía de remisión)
+    ("1790011674001", "1790011674001"),  # otro contribuyente
+])
+def test_comprador_ajeno(comprador, esperado):
+    idents = {"1710034065001", "1710034065"}
+    assert comprador_ajeno(_xml(comprador), idents) == esperado
+
+
+def test_sin_cliente_registrado_no_se_comprueba():
+    assert comprador_ajeno(_xml("1790011674001"), None) is None
+
+
+@pytest.mark.parametrize("dominio,coincide", [
+    ("srienlinea.sri.gob.ec", True), (".sri.gob.ec", True), ("sri.gob.ec", True),
+    (".google.com", False), ("www.recaptcha.net", False), ("sri.gob.ec.evil.com", False),
+    ("nosri.gob.ec", False),
+])
+def test_dominios_sri(dominio, coincide):
+    assert bool(DOMINIOS_SRI.search(dominio)) is coincide
+
+
+# Página falsa de Playwright con una fila de XML por cada contenido.
+class _Descarga:
+    def __init__(self, contenido):
+        self.contenido = contenido
+        self.suggested_filename = "comprobante.xml"
+
+    def save_as(self, ruta):
+        with open(ruta, "w", encoding="utf-8") as fh:
+            fh.write(self.contenido)
+
+
+class _Pagina:
+    def __init__(self, contenidos):
+        self.contenidos = contenidos
+        self._actual = None
+
+    def locator(self, _sel):
+        pagina = self
+
+        class _Loc:
+            def count(self):
+                return len(pagina.contenidos)
+
+            def nth(self, i):
+                class _Enlace:
+                    def click(self_inner):
+                        pagina._actual = _Descarga(pagina.contenidos[i])
+                return _Enlace()
+        return _Loc()
+
+    def is_closed(self):
+        return False
+
+    def wait_for_timeout(self, _ms):
+        pass
+
+    @contextlib.contextmanager
+    def expect_download(self, timeout=None):
+        class _Info:
+            pass
+        info = _Info()
+        yield info
+        info.value = self._actual
+
+
+def test_dos_clientes_seguidos_cada_xml_en_su_carpeta(tmp_path):
+    natural = {"1710034065001", "1710034065"}
+    sociedad = {"1790011674001"}
+    xml_a = _xml("1710034065", clave="1" * 49)
+    xml_b = _xml("1790011674001", clave="2" * 49)
+    carpeta_a, carpeta_b = tmp_path / "a", tmp_path / "b"
+    carpeta_a.mkdir(); carpeta_b.mkdir()
+
+    for idents, carpeta in ((natural, carpeta_a), (sociedad, carpeta_b)):
+        d = SRIDownloader(_cfg(tmp_path, identificaciones_cliente=idents))
+        # La "sesión" devuelve ambos XML: solo el del cliente debe quedarse.
+        assert d._descargar_pagina_actual(_Pagina([xml_a, xml_b]), str(carpeta)) == 1
+        assert d.rechazados == 1
+
+    assert sorted(p.name for p in carpeta_a.iterdir()) == ["1" * 49 + ".xml"]
+    assert sorted(p.name for p in carpeta_b.iterdir()) == ["2" * 49 + ".xml"]
+
+
+def test_cerrar_sesion_sri_borra_solo_cookies_del_sri(tmp_path):
+    llamadas = []
+
+    class _Ctx:
+        def clear_cookies(self, **kw):
+            llamadas.append(kw)
+
+    SRIDownloader(_cfg(tmp_path))._cerrar_sesion_sri(_Ctx())
+    assert llamadas == [{"domain": DOMINIOS_SRI}]

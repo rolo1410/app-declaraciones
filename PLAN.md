@@ -5,7 +5,7 @@
 Aplicación de escritorio (macOS y Windows) en Python que:
 
 1. Recibe como entrada el archivo TXT de **comprobantes recibidos** descargado del SRI
-   (formato TSV, ej. `0603545351001_Recibidos.txt`).
+   (formato TSV, ej. `9999999999001_Recibidos.txt`).
 2. Clasifica y totaliza las compras del período seleccionado.
 3. Genera el detalle de **casilleros y valores** que el contribuyente debe verificar/completar
    en la declaración de IVA de SRI en línea (formulario unificado, sucesor del 104).

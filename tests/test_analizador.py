@@ -26,10 +26,10 @@ FACTURA = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <numeroAutorizacion>1306202601</numeroAutorizacion>
 <comprobante><![CDATA[<?xml version="1.0"?><factura id="comprobante" version="2.1.0">
 <infoTributaria><ambiente>2</ambiente><razonSocial>TIENDA X</razonSocial>
-<ruc>0993152161001</ruc><claveAcceso>1234567890123456789012345678901234567890123456789</claveAcceso>
+<ruc>0999999999001</ruc><claveAcceso>1234567890123456789012345678901234567890123456789</claveAcceso>
 <codDoc>01</codDoc><estab>763</estab><ptoEmi>003</ptoEmi><secuencial>000138516</secuencial></infoTributaria>
 <infoFactura><fechaEmision>13/06/2026</fechaEmision>
-<razonSocialComprador>CLIENTE UNO</razonSocialComprador><identificacionComprador>0603545351</identificacionComprador>
+<razonSocialComprador>CLIENTE UNO</razonSocialComprador><identificacionComprador>9999999999</identificacionComprador>
 <totalSinImpuestos>100.00</totalSinImpuestos><totalDescuento>0.00</totalDescuento>
 <totalConImpuestos>
 <totalImpuesto><codigo>2</codigo><codigoPorcentaje>4</codigoPorcentaje><baseImponible>80.00</baseImponible><tarifa>15</tarifa><valor>12.00</valor></totalImpuesto>
@@ -45,11 +45,11 @@ FACTURA = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 NOTA_CREDITO = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <autorizacion><estado>AUTORIZADO</estado>
 <comprobante><![CDATA[<notaCredito id="comprobante" version="1.1.0">
-<infoTributaria><razonSocial>TIENDA X</razonSocial><ruc>0993152161001</ruc>
+<infoTributaria><razonSocial>TIENDA X</razonSocial><ruc>0999999999001</ruc>
 <claveAcceso>9999999990123456789012345678901234567890123456789</claveAcceso>
 <codDoc>04</codDoc><estab>001</estab><ptoEmi>001</ptoEmi><secuencial>000000010</secuencial></infoTributaria>
 <infoNotaCredito><fechaEmision>15/06/2026</fechaEmision>
-<razonSocialComprador>CLIENTE UNO</razonSocialComprador><identificacionComprador>0603545351</identificacionComprador>
+<razonSocialComprador>CLIENTE UNO</razonSocialComprador><identificacionComprador>9999999999</identificacionComprador>
 <totalSinImpuestos>50.00</totalSinImpuestos>
 <totalConImpuestos><totalImpuesto><codigo>2</codigo><codigoPorcentaje>4</codigoPorcentaje><baseImponible>50.00</baseImponible><tarifa>15</tarifa><valor>7.50</valor></totalImpuesto></totalConImpuestos>
 <valorModificacion>57.50</valorModificacion></infoNotaCredito>
@@ -60,11 +60,11 @@ NOTA_CREDITO = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 RETENCION = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <autorizacion><estado>AUTORIZADO</estado>
 <comprobante><![CDATA[<comprobanteRetencion id="comprobante" version="1.0.0">
-<infoTributaria><razonSocial>EMPRESA RETENEDORA</razonSocial><ruc>0993152161001</ruc>
+<infoTributaria><razonSocial>EMPRESA RETENEDORA</razonSocial><ruc>0999999999001</ruc>
 <claveAcceso>7777777770123456789012345678901234567890123456789</claveAcceso>
 <codDoc>07</codDoc><estab>001</estab><ptoEmi>001</ptoEmi><secuencial>000000005</secuencial></infoTributaria>
 <infoCompRetencion><fechaEmision>20/06/2026</fechaEmision><periodoFiscal>06/2026</periodoFiscal>
-<razonSocialSujetoRetenido>PROVEEDOR X</razonSocialSujetoRetenido><identificacionSujetoRetenido>1790010010001</identificacionSujetoRetenido></infoCompRetencion>
+<razonSocialSujetoRetenido>PROVEEDOR X</razonSocialSujetoRetenido><identificacionSujetoRetenido>1799999999001</identificacionSujetoRetenido></infoCompRetencion>
 <impuestos>
 <impuesto><codigo>1</codigo><codigoRetencion>312</codigoRetencion><baseImponible>100.00</baseImponible><porcentajeRetener>1.75</porcentajeRetener><valorRetenido>1.75</valorRetenido></impuesto>
 <impuesto><codigo>2</codigo><codigoRetencion>3</codigoRetencion><baseImponible>15.00</baseImponible><porcentajeRetener>70.00</porcentajeRetener><valorRetenido>10.50</valorRetenido></impuesto>
@@ -111,7 +111,7 @@ def test_parsear_factura(tmp_path):
     assert c.cod_doc == "01"
     assert c.tipo_nombre == "Factura"
     assert c.numero == "763-003-000138516"
-    assert c.ruc_emisor == "0993152161001"
+    assert c.ruc_emisor == "0999999999001"
     assert c.razon_social_emisor == "TIENDA X"
     assert c.razon_social_receptor == "CLIENTE UNO"
     assert c.fecha_emision == date(2026, 6, 13)
