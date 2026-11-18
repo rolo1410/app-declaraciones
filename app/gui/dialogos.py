@@ -177,8 +177,14 @@ class _Dialogo(ttk.Frame):
         self._menu_previo.clear()
 
     def mostrar(self):
-        self._abierto = True
         pila = self._pila()
+        if pila:
+            # Un solo formulario modal a la vez: se trae al frente el abierto.
+            abierto = pila[-1]
+            self._descartar()
+            abierto._al_frente()
+            return None
+        self._abierto = True
         pila.append(self)
         self._raiz.dialogos_abiertos = len(pila)
         self._bloquear_menu()
@@ -205,6 +211,16 @@ class _Dialogo(ttk.Frame):
         (foco or (self._enfocables() or [self])[0]).focus_force()
         self.wait_window(self)
         return self.resultado
+
+    def _descartar(self) -> None:
+        """Destruye un diálogo que nunca llegó a mostrarse."""
+        self._cerrando = True
+        for contenedor in (self._caja, self._velo):
+            if contenedor is not None:
+                try:
+                    contenedor.destroy()
+                except tk.TclError:
+                    pass
 
     def _pila(self) -> list:
         if not hasattr(self._raiz, "pila_dialogos"):
@@ -282,9 +298,27 @@ def tras_el_clic(widget, accion):
     En macOS, Tk mantiene el mouse «capturado» por el botón pulsado hasta que
     termina de atender el clic. Si el diálogo espera respuesta *dentro* de ese
     clic, la captura no se suelta y los clics no llegan al formulario. Se abre
-    un instante después, ya fuera del clic.
+    un instante después, ya fuera del clic, y nunca si ya hay un formulario
+    abierto (un solo modal a la vez).
     """
-    return lambda: widget.after(1, accion)
+    raiz = widget.winfo_toplevel()
+
+    def abrir() -> None:
+        raiz.accion_pendiente = False
+        pila = getattr(raiz, "pila_dialogos", [])
+        if pila:  # ya hay un formulario abierto: un solo modal a la vez
+            pila[-1]._al_frente()
+            return
+        accion()
+
+    def programar() -> None:
+        # Un doble clic no debe programar dos diálogos.
+        if getattr(raiz, "accion_pendiente", False):
+            return
+        raiz.accion_pendiente = True
+        widget.after(1, abrir)
+
+    return programar
 
 
 def _entrada_clave(padre, fila: int, etiqueta: str) -> tk.StringVar:

@@ -49,3 +49,38 @@ def test_dialogo_dentro_de_la_ventana_bloquea_el_menu_y_se_limpia():
         assert raiz.bind("<Escape>") == ""
     finally:
         raiz.destroy()
+
+
+def test_solo_un_formulario_modal_a_la_vez():
+    import pytest
+
+    tk = pytest.importorskip("tkinter")
+    try:
+        raiz = tk.Tk()
+    except tk.TclError:
+        pytest.skip("sin pantalla para Tk")
+    from app.gui.dialogos import DialogoTexto, tras_el_clic
+
+    vistos = {}
+    abiertos = []
+
+    def durante():
+        vistos["segundo"] = DialogoTexto(raiz, "Segundo", "x", "b").mostrar()
+        vistos["pila"] = len(raiz.pila_dialogos)
+        # Doble clic sobre un botón que abre un diálogo: no abre nada mientras
+        # haya uno abierto.
+        boton = tras_el_clic(raiz, lambda: abiertos.append(1))
+        boton()
+        boton()
+        raiz.after(30, primero.cancelar)
+
+    primero = DialogoTexto(raiz, "Primero", "x", "a")
+    raiz.after(50, durante)
+    try:
+        assert primero.mostrar() is None
+        raiz.update()
+        assert vistos == {"segundo": None, "pila": 1}
+        assert abiertos == []
+        assert raiz.pila_dialogos == []
+    finally:
+        raiz.destroy()
