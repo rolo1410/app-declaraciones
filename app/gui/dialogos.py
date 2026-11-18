@@ -13,10 +13,28 @@ from ..core import ruc as ruc_mod
 
 
 class _Dialogo(tk.Toplevel):
+    """Base de los diálogos modales.
+
+    En macOS no se usa ``transient``: Tk 8.6 convierte la ventana en «hija» de
+    la principal y, al arrastrarla, la mueve con retraso y la devuelve a su
+    sitio. Allí se usa el estilo nativo de diálogo modal movible y se la
+    mantiene delante de la ventana principal mientras esté abierta.
+    """
+
     def __init__(self, padre, titulo: str) -> None:
         super().__init__(padre)
+        self.withdraw()  # se muestra ya ubicada, en mostrar()
         self.title(titulo)
-        self.transient(padre.winfo_toplevel())
+        self._principal = padre.winfo_toplevel()
+        self._id_foco = None
+        if sys.platform == "darwin":
+            try:
+                self.tk.call("::tk::unsupported::MacWindowStyle", "style", self._w,
+                             "moveableModal", "")
+            except tk.TclError:
+                pass
+        else:
+            self.transient(self._principal)
         self.resizable(False, False)
         self.resultado = None
         self.cuerpo = ttk.Frame(self, padding=14)
@@ -35,15 +53,33 @@ class _Dialogo(tk.Toplevel):
         self.lbl_error.grid(row=fila - 1, column=0, columnspan=3, sticky="w")
 
     def mostrar(self):
+        # Ubicar antes de mostrar: centrada sobre la ventana principal.
         self.update_idletasks()
-        padre = self.master.winfo_toplevel()
-        x = padre.winfo_rootx() + (padre.winfo_width() - self.winfo_width()) // 2
-        y = padre.winfo_rooty() + (padre.winfo_height() - self.winfo_height()) // 3
+        p = self._principal
+        x = p.winfo_rootx() + (p.winfo_width() - self.winfo_reqwidth()) // 2
+        y = p.winfo_rooty() + (p.winfo_height() - self.winfo_reqheight()) // 3
         self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
-        self.grab_set()
+        self.deiconify()
+        if sys.platform == "darwin":
+            # Sin «transient», un clic en la ventana principal no debe taparla.
+            self._id_foco = p.bind("<FocusIn>", lambda _e: self.lift(), add="+")
+        try:
+            self.wait_visibility()
+            self.grab_set()
+        except tk.TclError:
+            pass  # la ventana se cerró antes de mostrarse
         self.focus_force()
         self.wait_window()
         return self.resultado
+
+    def destroy(self) -> None:
+        if self._id_foco is not None:
+            try:
+                self._principal.unbind("<FocusIn>", self._id_foco)
+            except tk.TclError:
+                pass
+            self._id_foco = None
+        super().destroy()
 
     def error(self, texto: str) -> None:
         self.lbl_error.configure(text=texto)
@@ -176,6 +212,30 @@ class DialogoFrase(_Dialogo):
             return
         self.resultado = frase
         self.destroy()
+
+
+class DialogoTexto(_Dialogo):
+    def __init__(self, padre, titulo: str, texto: str, inicial: str = "") -> None:
+        super().__init__(padre, titulo)
+        ttk.Label(self.cuerpo, text=texto, wraplength=440, justify="left").grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        self.var = tk.StringVar(value=inicial)
+        entrada = ttk.Entry(self.cuerpo, textvariable=self.var, width=44)
+        entrada.grid(row=1, column=0, columnspan=3, sticky="we")
+        entrada.select_range(0, "end")
+        entrada.focus_set()
+        self._botones(3)
+
+    def aceptar(self) -> None:
+        if not self.var.get().strip():
+            self.error("Escriba un valor.")
+            return
+        self.resultado = self.var.get().strip()
+        self.destroy()
+
+
+def pedir_texto(padre, titulo: str, texto: str, inicial: str = "") -> str | None:
+    return DialogoTexto(padre, titulo, texto, inicial).mostrar()
 
 
 def pedir_cliente_nuevo(padre, ruc: str = "", clave: str = ""):

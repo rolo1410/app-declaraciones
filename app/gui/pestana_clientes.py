@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 import tkinter as tk
-from tkinter import filedialog, font, messagebox, simpledialog, ttk
+from tkinter import filedialog, font, messagebox, ttk
 
 from ..core import cifrado, clientes, db, plataforma, preferencias
 from ..core import ruc as ruc_mod
@@ -234,8 +234,8 @@ class PestanaClientes(ttk.Frame):
         c = c or self._seleccionado()
         if not c:
             return
-        nombre = simpledialog.askstring(TITULO, f"Nuevo nombre para {c.ruc}:",
-                                        initialvalue=c.nombre, parent=self)
+        nombre = dialogos.pedir_texto(self, "Renombrar cliente",
+                                      f"Nuevo nombre o razón social para {c.ruc}:", c.nombre)
         if not nombre:
             return
         try:
