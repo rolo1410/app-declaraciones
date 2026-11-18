@@ -102,6 +102,17 @@ jobs:
           ./dist/ComprobantesSRI/ComprobantesSRI --selftest || true
           cat "${TMPDIR:-/tmp}/sri_selftest.log" 2>/dev/null || true
 
+      # Lo mismo en Windows: el .exe debe arrancar y cargar cifrado, llavero
+      # (Administrador de credenciales) y Tk. Tampoco falla el job.
+      - name: Verificar que el binario arranca (Windows)
+        if: matrix.nombre == 'windows'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist/ComprobantesSRI/ComprobantesSRI.exe" -ArgumentList "--selftest" -Wait -PassThru
+          Write-Host "Código de salida: $($p.ExitCode)"
+          Get-Content "$env:TEMP/sri_selftest.log" -ErrorAction SilentlyContinue
+
       # Se comprime la CARPETA, no su contenido: con "dist/ComprobantesSRI/*"
       # el zip queda plano y al extraerlo vuelca ~1200 archivos sueltos.
       - name: Empaquetar (Windows)
