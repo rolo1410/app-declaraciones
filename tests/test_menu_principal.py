@@ -159,3 +159,24 @@ def _descendientes(w):
     for hijo in w.winfo_children():
         yield hijo
         yield from _descendientes(hijo)
+
+
+def test_correo_escrito_en_nombre_visible_se_mueve_a_la_cuenta(app):
+    from app.core import perfil
+    from app.gui.pestana_configuracion import DialogoConfiguracion
+
+    def durante():
+        cfg = dialogo.pagina
+        valores = {"nombre": "Rolando estudio", "correo_declarante": "contacto@estudio.ec",
+                   "servidor": "localhost", "puerto": "1026", "remitente": "rolo@ejemplo.ec"}
+        for clave, valor in valores.items():
+            cfg._vars[clave].set(valor)
+        cfg.var_seguridad.set("Ninguna")
+        cfg.var_autenticar.set(False)
+        dialogo.aceptar()
+
+    dialogo = DialogoConfiguracion(app, app.contexto, app.acciones)
+    app.after(50, durante)
+    dialogo.mostrar()
+    c = perfil.leer().correo
+    assert (c.usuario, c.remitente) == ("rolo@ejemplo.ec", "Rolando estudio")

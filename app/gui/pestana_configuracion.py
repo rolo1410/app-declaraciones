@@ -267,7 +267,23 @@ class PestanaConfiguracion(ttk.Frame):
         self._mostrar_estado_clave()
         self._mostrar_archivos()
 
+    def _completar_correo_de_la_cuenta(self) -> None:
+        """Si falta el correo de la cuenta, lo toma de donde el usuario lo puso.
+
+        Es fácil escribir el correo en «Nombre visible»: si ahí hay un correo se
+        mueve a «Correo de la cuenta»; si no, se usa el correo de contacto.
+        """
+        if self._vars["usuario"].get().strip() or not self._vars["servidor"].get().strip():
+            return
+        visible = self._vars["remitente"].get().strip()
+        if "@" in visible and " " not in visible:
+            self._vars["usuario"].set(visible)
+            self._vars["remitente"].set(self._vars["nombre"].get().strip())
+        elif self._vars["correo_declarante"].get().strip():
+            self._vars["usuario"].set(self._vars["correo_declarante"].get().strip())
+
     def _leer(self) -> perfil.Perfil:
+        self._completar_correo_de_la_cuenta()
         v = {k: str(var.get()).strip() for k, var in self._vars.items()}
         seguridad = next((k for k, t in SEGURIDAD_TEXTO.items()
                           if t == self.var_seguridad.get()), "ssl")
