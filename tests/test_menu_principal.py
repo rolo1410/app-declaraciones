@@ -90,3 +90,21 @@ def test_cmd_w_cancela_el_dialogo_y_luego_cierra(app, monkeypatch):
 
     app.menu.cerrar_ventana()
     assert cerrada == [True]
+
+
+def test_configuracion_guarda_perfil_y_contrasena_cifrada(app):
+    from app.core import perfil
+
+    cfg = app.pestana_configuracion
+    for clave, valor in {"nombre": "Ana", "correo_declarante": "ana@estudio.ec",
+                         "usuario": "ana@estudio.ec", "clave": "app-pass"}.items():
+        cfg._vars[clave].set(valor)
+    cfg.var_proveedor.set("Outlook / Microsoft 365")
+    cfg._aplicar_proveedor()
+    assert cfg.guardar()
+    guardado = perfil.leer()
+    assert guardado.declarante.nombre == "Ana"
+    assert (guardado.correo.servidor, guardado.correo.puerto, guardado.correo.seguridad) == (
+        "smtp.office365.com", 587, "starttls")
+    assert cfg._vars["clave"].get() == ""  # la contraseña no queda en pantalla
+    assert app.contexto.registro.clave_smtp() == "app-pass"

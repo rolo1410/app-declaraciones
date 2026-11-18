@@ -14,15 +14,18 @@ from tkinter import filedialog, font, messagebox, ttk
 from ..core import adaptador, calculadora, clasificador, parser, sesion
 from ..core import analizador as az
 from ..core.models import Comprobante, Declaracion
-from .dialogos import tipos_archivo
+from .dialogos import pedir_envio, tras_el_clic, tipos_archivo
 
 TITULO = "Declaración de IVA — SRI Ecuador"
 
 
 class PestanaDeclaracion(ttk.Frame):
-    def __init__(self, master, contexto=None) -> None:
+    def __init__(self, master, contexto=None, on_configurar=None) -> None:
         super().__init__(master, padding=8)
         self.contexto = contexto
+        # Lleva a la pestaña «Configuración» si falta configurar el correo.
+        self.on_configurar = on_configurar
+        self._enviando = False
 
         self.comprobantes: list[Comprobante] = []
         self.advertencias: list[str] = []
@@ -197,6 +200,12 @@ class PestanaDeclaracion(ttk.Frame):
         self.etiqueta_resumen.pack(anchor="w", pady=(0, 12))
         ttk.Button(panel, text="Exportar a Excel…", command=self.exportar_excel).pack(fill="x", pady=2)
         ttk.Button(panel, text="Exportar a PDF…", command=self.exportar_pdf).pack(fill="x", pady=2)
+        ttk.Separator(panel).pack(fill="x", pady=8)
+        self.btn_enviar = ttk.Button(panel, text="Enviar al cliente por correo…",
+                                     command=tras_el_clic(self, self.enviar_por_correo))
+        self.btn_enviar.pack(fill="x", pady=2)
+        self.lbl_envio = ttk.Label(panel, text="", wraplength=220, justify="left")
+        self.lbl_envio.pack(anchor="w", pady=(4, 0))
         ttk.Label(panel, foreground="gray", wraplength=220, justify="left",
                   text="\nValores de apoyo: verifíquelos contra el prellenado "
                        "de SRI en línea antes de enviar la declaración.").pack(anchor="w")
@@ -669,3 +678,151 @@ class PestanaDeclaracion(ttk.Frame):
     def exportar_pdf(self) -> None:
         from ..export.pdf import exportar_pdf
         self._exportar(".pdf", exportar_pdf)
+
+    # ---------------------------------------------------------- envío por correo
+    def _faltan_ajustes(self, mensaje: str) -> None:
+        if messagebox.askyesno(TITULO, mensaje + "\n\n¿Ir a «Configuración»?") and self.on_configurar:
+            self.on_configurar()
+
+    def enviar_por_correo(self) -> None:
+        """Arma el informe (PDF, Excel, XML) y lo envía al correo del cliente."""
+        from ..core import informe, perfil
+
+        if self._enviando:
+            return
+        if not self.declaracion:
+            messagebox.showinfo(TITULO, "Primero calcule la declaración.")
+            return
+        if self.contexto is None or self.contexto.cliente is None:
+            messagebox.showinfo(TITULO, "Elija el cliente en el selector «Cliente» de arriba: "
+                                        "el informe se envía a su correo.")
+            return
+        if not self._confirmar_cliente_del_trabajo(self.ruc):
+            return
+        cliente = self.contexto.cliente
+        registro = self.contexto.registro
+        ajustes = perfil.leer()
+        if not ajustes.declarante.completo:
+            self._faltan_ajustes("Faltan sus datos (nombre y correo de contacto) para el "
+                                 "informe y la firma del correo.")
+            return
+        try:
+            hay_clave = registro.tiene_clave_smtp()
+        except Exception:  # noqa: BLE001
+            hay_clave = False
+        if not ajustes.correo.configurado or not hay_clave:
+            self._faltan_ajustes("Falta configurar la cuenta de correo de envío "
+                                 "(servidor, usuario y contraseña).")
+            return
+
+        declaracion = self.declaracion
+        claves = informe.claves_del_periodo(declaracion)
+        try:
+            carpeta_xml = registro.carpeta_descargas(cliente)
+        except Exception:  # noqa: BLE001
+            carpeta_xml = None
+        self.configure(cursor="watch")
+        self.update_idletasks()
+        try:
+            xml = informe.xml_de_comprobantes(carpeta_xml, claves) if carpeta_xml else []
+        finally:
+            self.configure(cursor="")
+        datos = pedir_envio(
+            self,
+            para=cliente.correo or "",
+            asunto=informe.asunto(declaracion, cliente.nombre),
+            cuerpo=informe.cuerpo(declaracion, cliente.nombre, cliente.ruc, ajustes.declarante),
+            xml_encontrados=len(xml), xml_esperados=len(claves),
+            correo_guardado=cliente.correo,
+        )
+        if not datos:
+            return
+        if datos["guardar_correo"]:
+            try:
+                registro.fijar_correo(cliente.id, datos["para"])
+                self.contexto.lista_cambio()
+            except Exception as e:  # noqa: BLE001
+                messagebox.showwarning(TITULO, f"No se guardó el correo del cliente:\n{e}")
+
+        carpeta_resultados = self._carpeta_resultados(declaracion.periodo)
+        if carpeta_resultados is None:
+            messagebox.showerror(TITULO, "No se pudo crear la carpeta de resultados del cliente.")
+            return
+        destino = informe.carpeta_envio(carpeta_resultados)
+        self.configure(cursor="watch")
+        self.update_idletasks()
+        try:
+            paquete = informe.armar_paquete(
+                declaracion, destino, contribuyente=(cliente.nombre, cliente.ruc),
+                declarante=ajustes.declarante, logo=ajustes.ruta_logo(),
+                carpeta_xml=carpeta_xml, incluir_pdf=datos["pdf"],
+                incluir_excel=datos["excel"], incluir_xml=datos["xml"])
+        except (OSError, ImportError, ValueError) as e:
+            messagebox.showerror(TITULO, f"No se pudo preparar el informe:\n{e}")
+            return
+        finally:
+            self.configure(cursor="")
+        if paquete.tamano > informe.LIMITE_ADJUNTOS and not messagebox.askyesno(
+            TITULO, f"Los adjuntos pesan {paquete.tamano / 1048576:.1f} MB y muchos servidores "
+                    "rechazan correos de más de 20 MB.\n\n¿Enviar de todas formas?"):
+            return
+        try:
+            clave = registro.clave_smtp()
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror(TITULO, str(e))
+            return
+        self._enviar_en_segundo_plano(ajustes, clave, datos, paquete)
+
+    def _enviar_en_segundo_plano(self, ajustes, clave: str, datos: dict, paquete) -> None:
+        import threading
+
+        from ..core import correo
+
+        self._enviando = True
+        self.btn_enviar.configure(state="disabled")
+        self.lbl_envio.configure(text="Enviando…", foreground="gray")
+        resultado: dict = {}
+
+        def trabajo() -> None:
+            try:
+                mensaje = correo.construir(
+                    ajustes.correo, correo.lista_correos(datos["para"]), datos["asunto"],
+                    datos["cuerpo"], paquete.adjuntos, responder_a=ajustes.declarante.correo)
+                resultado["rechazados"] = correo.enviar(ajustes.correo, clave, mensaje)
+            except correo.ErrorCorreo as e:
+                resultado["error"] = str(e)
+            except OSError as e:
+                resultado["error"] = f"No se pudo leer un adjunto: {e}"
+
+        hilo = threading.Thread(target=trabajo, daemon=True)
+        hilo.start()
+
+        def esperar() -> None:
+            if hilo.is_alive():
+                self.after(200, esperar)
+                return
+            self._enviando = False
+            self.btn_enviar.configure(state="normal")
+            if "error" in resultado:
+                self.lbl_envio.configure(text="No se envió.", foreground="#c0392b")
+                messagebox.showerror(TITULO, resultado["error"])
+                return
+            destinatarios = correo.lista_correos(datos["para"])
+            rechazados = resultado.get("rechazados") or []
+            self._registrar_envio(paquete, len(destinatarios) - len(rechazados))
+            self.lbl_envio.configure(text="✓ Enviado.", foreground="#1e8449")
+            texto = (f"Declaración enviada a {datos['para']}.\n\n"
+                     f"Copia del informe en:\n{paquete.carpeta}")
+            if rechazados:
+                messagebox.showwarning(TITULO, texto + "\n\nEl servidor rechazó: "
+                                       + ", ".join(rechazados))
+            else:
+                messagebox.showinfo(TITULO, texto)
+
+        esperar()
+
+    def _registrar_envio(self, paquete, n_destinatarios: int) -> None:
+        if self.contexto is not None:
+            self.contexto.registrar(
+                "correo_enviado", paquete.carpeta,
+                f"destinatarios={n_destinatarios} · adjuntos={len(paquete.adjuntos)}")

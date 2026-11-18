@@ -12,6 +12,7 @@ del login, y nunca se escribe en la bitácora ni en mensajes de error.
 """
 from __future__ import annotations
 
+import re
 import shutil
 import sqlite3
 from dataclasses import dataclass, field, replace
@@ -22,6 +23,21 @@ from . import ruc as ruc_mod
 
 PORTAL_SRI = "sri_en_linea"
 SUBCARPETAS = ("descargas", "resultados")
+# Datos asociados (AAD) de la contraseña del servidor de correo.
+_AAD_SMTP = ("global", "smtp")
+_CORREO = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
+
+
+def normalizar_correos(texto: str | None) -> str | None:
+    """Uno o varios correos separados por coma o punto y coma → ``a@x.ec, b@y.ec``.
+
+    Vacío → ``None``. Lanza ``ErrorClientes`` si alguno no parece un correo.
+    """
+    partes = [p.strip() for p in re.split(r"[,;]", texto or "") if p.strip()]
+    for parte in partes:
+        if not _CORREO.match(parte):
+            raise ErrorClientes(f"«{parte}» no parece una dirección de correo válida.")
+    return ", ".join(partes) or None
 
 
 class ErrorClientes(Exception):
@@ -47,6 +63,7 @@ class Cliente:
     activo: bool
     creado_en: str
     actualizado_en: str
+    correo: str | None = None
     advertencias: list[str] = field(default_factory=list, compare=False)
 
     @property
@@ -65,6 +82,7 @@ class Cliente:
             cedula=fila["cedula"], carpeta=fila["carpeta"], nombre=fila["nombre"],
             activo=bool(fila["activo"]), creado_en=fila["creado_en"],
             actualizado_en=fila["actualizado_en"],
+            correo=fila["correo"] if "correo" in fila.keys() else None,
         )
 
 
@@ -223,9 +241,11 @@ class Registro:
 
     # -- alta y edición -------------------------------------------------------------
 
-    def crear_cliente(self, ruc: str, nombre: str, clave: str) -> Cliente:
+    def crear_cliente(self, ruc: str, nombre: str, clave: str,
+                      correo: str | None = None) -> Cliente:
         """Registra el cliente, cifra su clave y crea su carpeta (todo o nada)."""
         info = ruc_mod.analizar(ruc)  # lanza RucInvalido
+        correo = normalizar_correos(correo)
         nombre = " ".join((nombre or "").split())
         if not nombre:
             raise ErrorClientes("El nombre o razón social es obligatorio.")
@@ -246,8 +266,10 @@ class Registro:
                     raise ClienteDuplicado(f"El RUC {info.ruc} ya está registrado.")
                 cur = cx.execute(
                     "INSERT INTO clientes (ruc, tipo_contribuyente, cedula, carpeta, nombre,"
-                    " activo, creado_en, actualizado_en) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
-                    (info.ruc, info.tipo, info.cedula, info.carpeta, nombre, ahora, ahora),
+                    " correo, activo, creado_en, actualizado_en)"
+                    " VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                    (info.ruc, info.tipo, info.cedula, info.carpeta, nombre, correo,
+                     ahora, ahora),
                 )
                 id_cliente = int(cur.lastrowid)
                 self._guardar_clave(cx, id_cliente, info.ruc, clave)
@@ -311,6 +333,57 @@ class Registro:
             cx.execute("UPDATE clientes SET nombre = ? WHERE id = ?", (nombre, id_cliente))
             self._tocar(cx, id_cliente)
             db.registrar(cx, "nombre_actualizado", id_cliente)
+
+    def fijar_correo(self, id_cliente: int, correo: str | None) -> None:
+        """Correo(s) del cliente para el envío de la declaración (vacío lo quita)."""
+        correo = normalizar_correos(correo)
+        with self._abrir() as cx, db.transaccion(cx):
+            self._obtener(cx, id_cliente)
+            cx.execute("UPDATE clientes SET correo = ? WHERE id = ?", (correo, id_cliente))
+            self._tocar(cx, id_cliente)
+            db.registrar(cx, "correo_actualizado", id_cliente)
+
+    # -- contraseña del servidor de correo ----------------------------------------
+
+    def guardar_clave_smtp(self, clave: str) -> None:
+        """Cifra la contraseña del servidor de correo con la llave maestra."""
+        if not clave:
+            raise ErrorClientes("La contraseña del correo no puede estar vacía.")
+        with self._abrir() as cx, db.transaccion(cx):
+            version, llave = self._llave_actual(cx, crear=True)
+            nonce, cifrada = cifrado.cifrar(llave, version, clave, *_AAD_SMTP)
+            cx.execute(
+                "INSERT INTO secretos (nombre, clave_cifrada, nonce, version_llave,"
+                " actualizado_en) VALUES ('smtp', ?, ?, ?, ?)"
+                " ON CONFLICT (nombre) DO UPDATE SET clave_cifrada = excluded.clave_cifrada,"
+                " nonce = excluded.nonce, version_llave = excluded.version_llave,"
+                " actualizado_en = excluded.actualizado_en",
+                (cifrada, nonce, version, db.ahora_iso()),
+            )
+            db.registrar(cx, "clave_correo_actualizada")
+
+    def tiene_clave_smtp(self) -> bool:
+        with self._abrir() as cx:
+            return cx.execute("SELECT 1 FROM secretos WHERE nombre = 'smtp'").fetchone() is not None
+
+    def clave_smtp(self) -> str:
+        """Descifra la contraseña del correo (solo en memoria, justo antes de enviar)."""
+        with self._abrir() as cx:
+            fila = cx.execute(
+                "SELECT s.clave_cifrada, s.nonce, s.version_llave, l.verificador"
+                " FROM secretos s JOIN llaves l ON l.version = s.version_llave"
+                " WHERE s.nombre = 'smtp'"
+            ).fetchone()
+        if fila is None:
+            raise ErrorClientes("Falta la contraseña del correo en «Configuración».")
+        llave = self._llave_de_version(fila["version_llave"], fila["verificador"])
+        return cifrado.descifrar(llave, fila["version_llave"], fila["nonce"],
+                                 fila["clave_cifrada"], *_AAD_SMTP)
+
+    def borrar_clave_smtp(self) -> None:
+        with self._abrir() as cx, db.transaccion(cx):
+            cx.execute("DELETE FROM secretos WHERE nombre = 'smtp'")
+            db.registrar(cx, "clave_correo_borrada")
 
     def fijar_activo(self, id_cliente: int, activo: bool) -> None:
         """Desactiva o reactiva un cliente (nunca se borra: quedan archivos y bitácora)."""

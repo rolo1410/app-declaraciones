@@ -107,7 +107,7 @@ class MenuPrincipal:
         self.i_encabezado = m.index("end")
         self.i_activo = [
             self._agregar(m, "Cambiar clave…", lambda: self._con_activo(p.cambiar_clave)),
-            self._agregar(m, "Renombrar…", lambda: self._con_activo(p.renombrar)),
+            self._agregar(m, "Editar datos…", lambda: self._con_activo(p.editar)),
             self._agregar(m, "Abrir carpeta del cliente",
                           lambda: self._con_activo(p.abrir_carpeta), "o", shift=True),
             self._agregar(m, "Abrir resultados del mes", self._abrir_resultados),

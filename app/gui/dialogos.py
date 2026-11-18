@@ -10,6 +10,7 @@ from tkinter import ttk
 
 from ..core import cifrado
 from ..core import ruc as ruc_mod
+from ..core.clientes import ErrorClientes, normalizar_correos
 
 
 # Opacidad del velo que atenúa la ventana principal detrás del diálogo.
@@ -88,18 +89,24 @@ class _Dialogo(ttk.Frame):
             yield from self._descendientes(hijo)
 
     def _enfocables(self) -> list:
-        tipos = ("TEntry", "TButton", "TCheckbutton", "TCombobox", "TRadiobutton", "Entry")
+        tipos = ("TEntry", "TButton", "TCheckbutton", "TCombobox", "TRadiobutton", "Entry",
+                 "Text")
         return [w for w in self._descendientes()
                 if w.winfo_class() in tipos and str(w.cget("state")) != "disabled"]
 
     def _ciclar(self, evento, paso: int) -> str:
+        if evento.widget.winfo_class() == "Text":
+            # La clase Text ya insertó la tabulación: se quita y se cambia de campo.
+            evento.widget.delete("insert-1c")
         lista = self._enfocables()
         if lista:
             i = lista.index(evento.widget) if evento.widget in lista else -paso
             lista[(i + paso) % len(lista)].focus_set()
         return "break"
 
-    def _enter(self, evento) -> str:
+    def _enter(self, evento) -> str | None:
+        if evento.widget.winfo_class() == "Text":
+            return None  # en un texto de varias líneas, Enter es salto de línea
         if evento.widget.winfo_class() == "TButton" and self._contiene(evento.widget):
             evento.widget.invoke()  # Enter sobre «Cancelar» cancela
         else:
@@ -350,7 +357,13 @@ class DialogoNuevoCliente(_Dialogo):
             self.var_clave2.set(clave_inicial)
         ttk.Label(c, text="La clave se guarda cifrada y no se podrá volver a ver.",
                   foreground="gray").grid(row=5, column=1, sticky="w", padx=8)
-        self._botones(7, "Registrar")
+        ttk.Label(c, text="Correo (opcional):").grid(row=6, column=0, sticky="w", pady=(10, 4))
+        self.var_correo = tk.StringVar()
+        ttk.Entry(c, textvariable=self.var_correo, width=34).grid(
+            row=6, column=1, sticky="w", padx=8, pady=(10, 4))
+        ttk.Label(c, text="Para enviarle la declaración. Varios: sepárelos con comas.",
+                  foreground="gray").grid(row=7, column=1, sticky="w", padx=8)
+        self._botones(9, "Registrar")
         self.var_ruc.trace_add("write", lambda *_: self._analizar())
         self._analizar()
         self.ent_ruc.focus_set()
@@ -386,8 +399,13 @@ class DialogoNuevoCliente(_Dialogo):
         if self.var_clave.get() != self.var_clave2.get():
             self.error("Las claves no coinciden.")
             return
+        try:
+            correo = normalizar_correos(self.var_correo.get())
+        except ErrorClientes as e:
+            self.error(str(e))
+            return
         self.resultado = ("".join(self.var_ruc.get().split()),
-                          self.var_nombre.get().strip(), self.var_clave.get())
+                          self.var_nombre.get().strip(), self.var_clave.get(), correo)
         self.destroy()
 
 
@@ -463,12 +481,147 @@ class DialogoTexto(_Dialogo):
         self.destroy()
 
 
+class DialogoEditarCliente(_Dialogo):
+    """Nombre y correo de un cliente (el RUC no se edita)."""
+
+    def __init__(self, padre, cliente) -> None:
+        super().__init__(padre, "Editar cliente")
+        c = self.cuerpo
+        ttk.Label(c, text=f"RUC {cliente.ruc} · {cliente.nombre_tipo}", foreground="gray").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        ttk.Label(c, text="Nombre / razón social:").grid(row=1, column=0, sticky="w", pady=4)
+        self.var_nombre = tk.StringVar(value=cliente.nombre)
+        ttk.Entry(c, textvariable=self.var_nombre, width=40).grid(row=1, column=1, padx=8)
+        ttk.Label(c, text="Correo:").grid(row=2, column=0, sticky="w", pady=4)
+        self.var_correo = tk.StringVar(value=cliente.correo or "")
+        self.ent_correo = ttk.Entry(c, textvariable=self.var_correo, width=40)
+        self.ent_correo.grid(row=2, column=1, padx=8)
+        ttk.Label(c, text="Para enviarle la declaración. Varios: sepárelos con comas.",
+                  foreground="gray").grid(row=3, column=1, sticky="w", padx=8)
+        self._botones(5, "Guardar")
+
+    def aceptar(self) -> None:
+        nombre = " ".join(self.var_nombre.get().split())
+        if not nombre:
+            self.error("Escriba el nombre o la razón social.")
+            return
+        try:
+            correo = normalizar_correos(self.var_correo.get())
+        except ErrorClientes as e:
+            self.error(str(e))
+            return
+        self.resultado = (nombre, correo)
+        self.destroy()
+
+
+class DialogoEnvio(_Dialogo):
+    """Destinatarios, asunto, mensaje y adjuntos del envío de la declaración."""
+
+    def __init__(self, padre, *, para: str, asunto: str, cuerpo: str, xml_encontrados: int,
+                 xml_esperados: int, correo_guardado: str | None) -> None:
+        super().__init__(padre, "Enviar declaración al cliente")
+        c = self.cuerpo
+        c.columnconfigure(1, weight=1)
+        self._correo_guardado = correo_guardado or ""
+
+        ttk.Label(c, text="Para:").grid(row=0, column=0, sticky="w", pady=4)
+        self.var_para = tk.StringVar(value=para)
+        self.ent_para = ttk.Entry(c, textvariable=self.var_para, width=64)
+        self.ent_para.grid(row=0, column=1, sticky="we", padx=8)
+        self.var_guardar = tk.BooleanVar(value=not self._correo_guardado)
+        self.chk_guardar = ttk.Checkbutton(c, text="Guardar como correo del cliente",
+                                           variable=self.var_guardar)
+        self.chk_guardar.grid(row=1, column=1, sticky="w", padx=8)
+        self.var_para.trace_add("write", lambda *_: self._ver_guardar())
+        self._ver_guardar()
+
+        ttk.Label(c, text="Asunto:").grid(row=2, column=0, sticky="w", pady=4)
+        self.var_asunto = tk.StringVar(value=asunto)
+        ttk.Entry(c, textvariable=self.var_asunto, width=64).grid(
+            row=2, column=1, sticky="we", padx=8)
+
+        ttk.Label(c, text="Mensaje:").grid(row=3, column=0, sticky="nw", pady=4)
+        marco = ttk.Frame(c)
+        marco.grid(row=3, column=1, sticky="nsew", padx=8, pady=4)
+        self.txt = tk.Text(marco, width=72, height=15, wrap="word", undo=True,
+                           relief="flat", highlightthickness=1, padx=8, pady=6)
+        barra = ttk.Scrollbar(marco, orient="vertical", command=self.txt.yview)
+        self.txt.configure(yscrollcommand=barra.set)
+        self.txt.pack(side="left", fill="both", expand=True)
+        barra.pack(side="left", fill="y")
+        self.txt.insert("1.0", cuerpo)
+
+        ttk.Label(c, text="Adjuntos:").grid(row=4, column=0, sticky="nw", pady=(8, 0))
+        adj = ttk.Frame(c)
+        adj.grid(row=4, column=1, sticky="w", padx=8, pady=(8, 0))
+        self.var_pdf = tk.BooleanVar(value=True)
+        self.var_excel = tk.BooleanVar(value=True)
+        self.var_xml = tk.BooleanVar(value=xml_encontrados > 0)
+        ttk.Checkbutton(adj, text="Informe PDF (con sus datos y logo)",
+                        variable=self.var_pdf).pack(anchor="w")
+        ttk.Checkbutton(adj, text="Detalle en Excel", variable=self.var_excel).pack(anchor="w")
+        texto_xml = f"XML de comprobantes en .zip ({xml_encontrados} de {xml_esperados})"
+        chk_xml = ttk.Checkbutton(adj, text=texto_xml, variable=self.var_xml)
+        chk_xml.pack(anchor="w")
+        if xml_encontrados == 0:
+            chk_xml.state(["disabled"])
+        if xml_encontrados < xml_esperados:
+            ttk.Label(adj, foreground="#b9770e", wraplength=460, justify="left",
+                      text=("No se encontraron en la carpeta de descargas del cliente los XML "
+                            f"de {xml_esperados - xml_encontrados} comprobante(s) del período "
+                            "(p. ej. si se cargaron desde el TXT).")).pack(anchor="w", pady=(2, 0))
+        self._botones(6, "Enviar")
+        self.ent_para.focus_set()
+
+    def _ver_guardar(self) -> None:
+        distinto = self.var_para.get().strip() != self._correo_guardado
+        if distinto:
+            self.chk_guardar.grid()
+        else:
+            self.chk_guardar.grid_remove()
+
+    def aceptar(self) -> None:
+        try:
+            para = normalizar_correos(self.var_para.get())
+        except ErrorClientes as e:
+            self.error(str(e))
+            return
+        if not para:
+            self.error("Escriba el correo del cliente.")
+            return
+        if not self.var_asunto.get().strip():
+            self.error("Escriba el asunto.")
+            return
+        if not (self.var_pdf.get() or self.var_excel.get() or self.var_xml.get()):
+            self.error("Elija al menos un adjunto.")
+            return
+        self.resultado = {
+            "para": para, "asunto": self.var_asunto.get().strip(),
+            "cuerpo": self.txt.get("1.0", "end-1c"),
+            "pdf": self.var_pdf.get(), "excel": self.var_excel.get(), "xml": self.var_xml.get(),
+            "guardar_correo": self.var_guardar.get() and para != self._correo_guardado,
+        }
+        self.destroy()
+
+
+def pedir_envio(padre, **datos) -> dict | None:
+    return DialogoEnvio(padre, **datos).mostrar()
+
+
+def pedir_datos_cliente(padre, cliente, enfocar_correo: bool = False):
+    """``(nombre, correo)`` o ``None`` si se cancela."""
+    dialogo = DialogoEditarCliente(padre, cliente)
+    if enfocar_correo:
+        dialogo.ent_correo.focus_set()
+    return dialogo.mostrar()
+
+
 def pedir_texto(padre, titulo: str, texto: str, inicial: str = "") -> str | None:
     return DialogoTexto(padre, titulo, texto, inicial).mostrar()
 
 
 def pedir_cliente_nuevo(padre, ruc: str = "", clave: str = ""):
-    """``(ruc, nombre, clave)`` o ``None`` si se cancela."""
+    """``(ruc, nombre, clave, correo)`` o ``None`` si se cancela."""
     return DialogoNuevoCliente(padre, ruc, clave).mostrar()
 
 

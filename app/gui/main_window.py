@@ -1,6 +1,6 @@
-"""Ventana principal: menú, selector de cliente y cuatro pestañas.
+"""Ventana principal: menú, selector de cliente y cinco pestañas.
 
-    Clientes  ·  Descarga  →  Análisis  →  Declaración
+    Clientes  ·  Descarga  →  Análisis  →  Declaración  ·  Configuración
 
 Flujo: descargar los XML del SRI, analizarlos y enviarlos a la declaración para
 calcular los casilleros del formulario de IVA.
@@ -17,6 +17,7 @@ from .contexto import ContextoCliente
 from .menu_principal import MenuPrincipal
 from .pestana_analisis import PestanaAnalisis
 from .pestana_clientes import PestanaClientes
+from .pestana_configuracion import PestanaConfiguracion
 from .pestana_declaracion import PestanaDeclaracion
 from .pestana_descarga import PestanaDescarga
 from .recursos import poner_icono
@@ -44,7 +45,9 @@ class App(tk.Tk):
         # Las pestañas se crean en orden de flujo y se enlazan entre sí.
         ctx = self.contexto
         self.pestana_clientes = PestanaClientes(notebook, ctx)
-        self.pestana_declaracion = PestanaDeclaracion(notebook, contexto=ctx)
+        self.pestana_configuracion = PestanaConfiguracion(notebook, ctx)
+        self.pestana_declaracion = PestanaDeclaracion(
+            notebook, contexto=ctx, on_configurar=self._ir_a_configuracion)
         self.pestana_analisis = PestanaAnalisis(
             notebook, on_enviar_declaracion=self._enviar_a_declaracion, contexto=ctx)
         self.pestana_descarga = PestanaDescarga(
@@ -54,6 +57,7 @@ class App(tk.Tk):
         notebook.add(self.pestana_descarga, text="  1 · Descarga  ")
         notebook.add(self.pestana_analisis, text="  2 · Análisis  ")
         notebook.add(self.pestana_declaracion, text="  3 · Declaración  ")
+        notebook.add(self.pestana_configuracion, text="  Configuración  ")
 
         # Barra de menús: «Clientes» (gestión del registro) e «Ir» (pestañas).
         self.menu = MenuPrincipal(self, ctx, self.pestana_clientes, [
@@ -61,6 +65,7 @@ class App(tk.Tk):
             ("1 · Descarga", lambda: notebook.select(self.pestana_descarga)),
             ("2 · Análisis", lambda: notebook.select(self.pestana_analisis)),
             ("3 · Declaración", lambda: notebook.select(self.pestana_declaracion)),
+            ("Configuración", self._ir_a_configuracion),
         ])
 
         # Cerrar (botón de la ventana, ⌘W y ⌘Q) pasa por cerrar(): avisa si hay
@@ -68,6 +73,8 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.cerrar)
         if platform.system() == "Darwin":
             self.createcommand("tk::mac::Quit", self.cerrar)
+            # «Comprobantes SRI → Ajustes…» (⌘,) del menú de la app en macOS.
+            self.createcommand("tk::mac::ShowPreferences", self._ir_a_configuracion)
 
         # En macOS, una app lanzada fuera de un bundle .app no se activa sola:
         # el primer clic solo enfoca la ventana en vez de accionar el control.
@@ -90,6 +97,11 @@ class App(tk.Tk):
         ):
             return
         self.destroy()
+
+    def _ir_a_configuracion(self) -> None:
+        if getattr(self, "pila_dialogos", None):
+            return
+        self.notebook.select(self.pestana_configuracion)
 
     def _ir_a_clientes(self) -> None:
         self.notebook.select(self.pestana_clientes)

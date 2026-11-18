@@ -66,7 +66,8 @@ class PestanaClientes(ttk.Frame):
 
         marco = ttk.Frame(self)
         marco.pack(fill="both", expand=True, **pad)
-        columnas = (("ruc", "RUC", 130), ("nombre", "Nombre / razón social", 320),
+        columnas = (("ruc", "RUC", 130), ("nombre", "Nombre / razón social", 280),
+                    ("correo", "Correo", 200),
                     ("tipo", "Tipo", 120), ("carpeta", "Carpeta", 130), ("estado", "Estado", 90))
         self.tabla = ttk.Treeview(marco, columns=[c[0] for c in columnas], show="headings",
                                   selectmode="browse")
@@ -89,7 +90,7 @@ class PestanaClientes(ttk.Frame):
         acciones.pack(fill="x", **pad)
         self.btn_usar = ttk.Button(acciones, text="Usar este cliente", command=self.usar)
         self.btn_clave = ttk.Button(acciones, text="Cambiar clave…", command=self._tras(self.cambiar_clave))
-        self.btn_nombre = ttk.Button(acciones, text="Renombrar…", command=self._tras(self.renombrar))
+        self.btn_nombre = ttk.Button(acciones, text="Editar datos…", command=self._tras(self.editar))
         self.btn_activo = ttk.Button(acciones, text="Desactivar", command=self._tras(self.alternar_activo))
         self.btn_carpeta = ttk.Button(acciones, text="Abrir carpeta", command=self.abrir_carpeta)
         for b in (self.btn_usar, self.btn_clave, self.btn_nombre, self.btn_activo, self.btn_carpeta):
@@ -133,7 +134,7 @@ class PestanaClientes(ttk.Frame):
             iid = str(c.id)
             self._por_iid[iid] = c
             self.tabla.insert("", "end", iid=iid, values=(
-                c.ruc, c.nombre, c.nombre_tipo, c.carpeta, "Activo" if c.activo else "Desactivado"))
+                c.ruc, c.nombre, c.correo or "—", c.nombre_tipo, c.carpeta, "Activo" if c.activo else "Desactivado"))
         if seleccion and str(seleccion.id) in self._por_iid:
             self.tabla.selection_set(str(seleccion.id))
         self._marcar_activo()
@@ -197,7 +198,7 @@ class PestanaClientes(ttk.Frame):
             return None
         primera_vez = self._estado_llave_seguro() == "sin_configurar"
         try:
-            c = self.registro.crear_cliente(*datos)
+            c = self.registro.crear_cliente(*datos[:3], correo=datos[3])
         except (ruc_mod.RucInvalido, clientes.ErrorClientes, cifrado.ErrorCifrado) as e:
             self._error(e)
             return None
@@ -234,20 +235,25 @@ class PestanaClientes(ttk.Frame):
         if c:
             cambiar_clave_de(self, self.contexto, c)
 
-    def renombrar(self, c: clientes.Cliente | None = None) -> None:
+    def editar(self, c: clientes.Cliente | None = None, enfocar_correo: bool = False) -> bool:
+        """Nombre y correo del cliente. True si se guardó algún cambio."""
         c = c or self._seleccionado()
         if not c:
-            return
-        nombre = dialogos.pedir_texto(self, "Renombrar cliente",
-                                      f"Nuevo nombre o razón social para {c.ruc}:", c.nombre)
-        if not nombre:
-            return
+            return False
+        datos = dialogos.pedir_datos_cliente(self, c, enfocar_correo)
+        if not datos:
+            return False
+        nombre, correo = datos
         try:
-            self.registro.renombrar(c.id, nombre)
+            if nombre != c.nombre:
+                self.registro.renombrar(c.id, nombre)
+            if correo != c.correo:
+                self.registro.fijar_correo(c.id, correo)
         except clientes.ErrorClientes as e:
             self._error(e)
-            return
+            return False
         self.contexto.lista_cambio()
+        return True
 
     def alternar_activo(self, c: clientes.Cliente | None = None) -> None:
         c = c or self._seleccionado()

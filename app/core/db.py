@@ -67,6 +67,19 @@ MIGRACIONES: list[str] = [
 
     CREATE INDEX bitacora_cliente ON bitacora (id_cliente, ocurrido_en);
     """,
+    # v1 -> v2: correo del cliente (envío de la declaración) y secretos globales
+    # cifrados con la llave maestra (contraseña del servidor de correo).
+    """
+    ALTER TABLE clientes ADD COLUMN correo TEXT;
+
+    CREATE TABLE secretos (
+      nombre          TEXT PRIMARY KEY CHECK (nombre IN ('smtp')),
+      clave_cifrada   BLOB NOT NULL,
+      nonce           BLOB NOT NULL CHECK (length(nonce) = 12),
+      version_llave   INTEGER NOT NULL REFERENCES llaves(version),
+      actualizado_en  TEXT NOT NULL
+    );
+    """,
 ]
 
 VERSION_ESQUEMA = len(MIGRACIONES)

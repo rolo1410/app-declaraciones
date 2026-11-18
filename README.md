@@ -162,6 +162,26 @@ Pulse **«Enviar a Declaración ▸»** para pasar las facturas al cálculo del 
 - **Calcular declaración** muestra cada casillero con su valor y el resumen
   (impuesto a pagar o crédito a favor).
 - **Exportar** a Excel o PDF.
+- **Enviar al cliente por correo…** arma el informe y lo envía desde su cuenta
+  (ver «Configuración»). Puede editar destinatarios, asunto y mensaje, y elegir
+  los adjuntos:
+  - PDF con los casilleros, su logo y «Preparado por»;
+  - el detalle en Excel;
+  - los XML del período en un `.zip` (se buscan por clave de acceso en la
+    carpeta `descargas/` del cliente).
+
+  El mensaje trae el resumen (impuesto a pagar o crédito a favor) y la fecha
+  límite según el noveno dígito del RUC. Una copia del paquete queda en
+  `resultados/<AAAA-MM>/envio_<fecha>/` y el envío se anota en la bitácora.
+
+### Configuración
+- **Quien prepara la declaración:** nombre o estudio, cédula/RUC, cargo,
+  n.º de registro, contacto y logo. Van al pie del PDF y a la firma del correo.
+- **Correo de envío (SMTP):** proveedor (Gmail, Outlook, Yahoo, Zoho u otro),
+  usuario y contraseña. Gmail y Outlook exigen una *contraseña de aplicación*.
+  La contraseña se guarda cifrada con la llave maestra (como las claves del
+  SRI) y no se vuelve a mostrar. «Probar conexión» inicia sesión sin enviar nada.
+- Se abre también con ⌘, (macOS) o desde el menú «Ir».
 
 También puede alimentar la declaración con un **archivo TXT de «Recibidos»**
 (botón «Cargar archivo Recibidos (TXT)…») si prefiere ese flujo.
@@ -229,15 +249,20 @@ app/
     models.py             Modelos de la declaración (Decimal)
     clasificador.py       Clasificación con/sin crédito
     calculadora.py        Cálculo de los casilleros
+    perfil.py             Datos de quien declara y servidor de correo (perfil.json)
+    informe.py            Paquete para el cliente (PDF, Excel, XML) y texto del correo
+    correo.py             Envío por SMTP
   gui/
     main_window.py        Ventana: selector de cliente + pestañas
     contexto.py           Cliente activo compartido por las pestañas
     selector_cliente.py   Combo «Cliente» global
-    dialogos.py           Alta de cliente, clave y frase de paso
+    dialogos.py           Formularios modales (cliente, clave, frase, envío)
     pestana_clientes.py   Pestaña Clientes
     pestana_descarga.py   Pestaña 1 · Descarga
     pestana_analisis.py   Pestaña 2 · Análisis
-    pestana_declaracion.py Pestaña 3 · Declaración
+    pestana_declaracion.py Pestaña 3 · Declaración (incluye el envío por correo)
+    pestana_configuracion.py Pestaña Configuración
+    menu_principal.py     Barra de menús (Clientes, Ir, Ventana)
     recursos.py           Utilidades de recursos e imágenes
   export/                 Reportes Excel (openpyxl) y PDF (reportlab)
 tests/                    Pruebas unitarias (pytest)
