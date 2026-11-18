@@ -25,9 +25,10 @@ class _Dialogo(ttk.Frame):
     """Base de los diálogos modales, «dentro» de la ventana principal.
 
     Con ``FLOTANTE``: un velo translúcido (ventana sin borde) cubre el
-    contenido de la ventana principal y la atenúa; encima, otra ventana sin
-    borde con el formulario, centrada. Ninguna se puede arrastrar, y ambas
-    siguen a la ventana principal si se mueve o cambia de tamaño. Sin
+    contenido de la ventana principal y la atenúa; encima, el formulario en una
+    ventana **normal** (con barra de título), centrada. Debe ser normal: en
+    macOS una ventana sin borde no recibe el teclado y no se podía escribir.
+    Ambas siguen a la ventana principal si se mueve o cambia de tamaño. Sin
     ``FLOTANTE``: una cubierta opaca dentro de la propia ventana.
 
     En ambos casos es modal: el velo no deja hacer clic debajo, el menú y sus
@@ -51,11 +52,13 @@ class _Dialogo(ttk.Frame):
                 self._velo.attributes("-alpha", OPACIDAD_VELO)
             except tk.TclError:
                 pass
-            self._caja = tk.Toplevel(raiz, background=_color_borde(raiz))
+            self._caja = tk.Toplevel(raiz)
             self._caja.withdraw()
-            self._caja.overrideredirect(True)
+            self._caja.title(titulo)
+            self._caja.resizable(False, False)
+            self._caja.protocol("WM_DELETE_WINDOW", self.cancelar)
             super().__init__(self._caja, padding=(20, 14, 20, 18))
-            self.pack(padx=1, pady=1)  # 1 px de borde con el fondo de la caja
+            self.pack(fill="both", expand=True)
         else:
             self._caja = ttk.Frame(raiz)  # cubierta opaca de toda la ventana
             borde = tk.Frame(self._caja, background=_color_borde(raiz))
@@ -68,10 +71,11 @@ class _Dialogo(ttk.Frame):
         self._cerrando = False
         self._enlaces_raiz: list[tuple[str, str]] = []
 
-        tamano = 15 if sys.platform == "darwin" else 12
-        ttk.Label(self, text=titulo, font=("TkDefaultFont", tamano, "bold")).pack(
-            anchor="w")
-        ttk.Separator(self).pack(fill="x", pady=(8, 12))
+        if not FLOTANTE:  # en la ventana flotante el título va en su barra
+            tamano = 15 if sys.platform == "darwin" else 12
+            ttk.Label(self, text=titulo, font=("TkDefaultFont", tamano, "bold")).pack(
+                anchor="w")
+            ttk.Separator(self).pack(fill="x", pady=(8, 12))
         self.cuerpo = ttk.Frame(self)
         self.cuerpo.pack(fill="both", expand=True)
 
@@ -156,6 +160,13 @@ class _Dialogo(ttk.Frame):
         cy = y + int((alto - self._caja.winfo_reqheight()) * 0.4)
         self._caja.geometry(f"+{max(cx, 0)}+{max(cy, 0)}")
 
+    def _enfocar(self) -> None:
+        if self._cerrando or not self.winfo_exists():
+            return
+        actual = self.focus_get()
+        foco = actual if actual is not None and self._contiene(actual) else None
+        (foco or (self._enfocables() or [self])[0]).focus_force()
+
     def _al_frente(self, _evento=None) -> None:
         """Si se activa la ventana principal, el velo y el diálogo vuelven encima."""
         if self._cerrando or self._pila()[-1:] != [self]:
@@ -221,9 +232,11 @@ class _Dialogo(ttk.Frame):
             self._caja.place(relx=0, rely=0, relwidth=1, relheight=1)
             self._caja.lift()
         self.update_idletasks()
-        actual = self.focus_get()
-        foco = actual if actual is not None and self._contiene(actual) else None
-        (foco or (self._enfocables() or [self])[0]).focus_force()
+        self._enfocar()
+        if FLOTANTE:
+            # La ventana del formulario termina de aparecer después: se vuelve a
+            # enfocar para que sea la que recibe el teclado.
+            self.after(80, self._enfocar)
         self.wait_window(self)
         return self.resultado
 
