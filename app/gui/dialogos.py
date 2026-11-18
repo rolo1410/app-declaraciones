@@ -12,57 +12,145 @@ from ..core import cifrado
 from ..core import ruc as ruc_mod
 
 
-class _Dialogo(tk.Toplevel):
-    """Base de los diálogos modales.
+class _Dialogo(ttk.Frame):
+    """Base de los diálogos: una tarjeta dentro de la ventana principal.
 
-    En macOS no se usa ``transient``: Tk 8.6 convierte la ventana en «hija» de
-    la principal y, al arrastrarla, la mueve con retraso y la devuelve a su
-    sitio. Tampoco el estilo ``moveableModal`` (API «unsupported» de Tk): tras
-    arrastrar, el cursor se queda ocupado y el formulario no responde. Basta
-    una ventana normal con ``grab``: Tk la devuelve al frente si se hace clic
-    en la principal.
+    No se usa una ventana aparte (``Toplevel``): en macOS, con Tk 8.6, arrastrar
+    un diálogo modal lo devolvía a su sitio o dejaba el cursor ocupado y el
+    formulario sin responder. Aquí el diálogo cubre toda la ventana principal
+    (nada debajo recibe clics), se centra como una tarjeta y es modal a su
+    modo: el menú queda deshabilitado y Tab recorre solo sus campos.
     """
 
     def __init__(self, padre, titulo: str) -> None:
-        super().__init__(padre)
-        self.withdraw()  # se muestra ya ubicada, en mostrar()
-        self.title(titulo)
-        self._principal = padre.winfo_toplevel()
-        if sys.platform != "darwin":
-            self.transient(self._principal)
-        self.resizable(False, False)
+        raiz = padre.winfo_toplevel()
+        super().__init__(raiz)
+        self._raiz = raiz
         self.resultado = None
-        self.cuerpo = ttk.Frame(self, padding=14)
+        self._menu_previo: list[tuple[tk.Menu, int, str]] = []
+        self._abierto = False
+
+        tarjeta = ttk.Labelframe(self, text=f"  {titulo}  ", padding=(18, 12, 18, 16),
+                                 style="Dialogo.TLabelframe")
+        tarjeta.place(relx=0.5, rely=0.42, anchor="center")
+        self.cuerpo = ttk.Frame(tarjeta)
         self.cuerpo.pack(fill="both", expand=True)
-        self.protocol("WM_DELETE_WINDOW", self.cancelar)
-        self.bind("<Escape>", lambda _e: self.cancelar())
-        self.bind("<Return>", lambda _e: self.aceptar())
+        estilo = ttk.Style(raiz)
+        negrita = ("TkDefaultFont", 14, "bold") if sys.platform == "darwin" \
+            else ("TkDefaultFont", 11, "bold")
+        estilo.configure("Dialogo.TLabelframe.Label", font=negrita)
+
 
     def _botones(self, fila: int, texto_ok: str = "Aceptar") -> None:
         barra = ttk.Frame(self.cuerpo)
         barra.grid(row=fila, column=0, columnspan=3, sticky="e", pady=(12, 0))
         ttk.Button(barra, text="Cancelar", command=self.cancelar).pack(side="right")
-        ttk.Button(barra, text=texto_ok, command=self.aceptar).pack(side="right", padx=6)
+        ttk.Button(barra, text=texto_ok, command=self.aceptar,
+                   default="active").pack(side="right", padx=6)
         self.lbl_error = ttk.Label(self.cuerpo, text="", foreground="#c0392b", wraplength=420,
                                    justify="left")
         self.lbl_error.grid(row=fila - 1, column=0, columnspan=3, sticky="w")
 
+    # -- teclado -------------------------------------------------------------------
+    def _descendientes(self, w=None):
+        for hijo in (w or self).winfo_children():
+            yield hijo
+            yield from self._descendientes(hijo)
+
+    def _enfocables(self) -> list:
+        tipos = ("TEntry", "TButton", "TCheckbutton", "TCombobox", "TRadiobutton", "Entry")
+        return [w for w in self._descendientes()
+                if w.winfo_class() in tipos and str(w.cget("state")) != "disabled"]
+
+    def _ciclar(self, evento, paso: int) -> str:
+        lista = self._enfocables()
+        if lista:
+            i = lista.index(evento.widget) if evento.widget in lista else -paso
+            lista[(i + paso) % len(lista)].focus_set()
+        return "break"
+
+    def _enter(self, evento) -> str:
+        if evento.widget.winfo_class() == "TButton" and self._contiene(evento.widget):
+            evento.widget.invoke()  # Enter sobre «Cancelar» cancela
+        else:
+            self.aceptar()
+        return "break"
+
+    def _contiene(self, w) -> bool:
+        return str(w).startswith(str(self) + ".")
+
+    # Las teclas se enlazan a la ventana principal (no a cada campo) para que
+    # funcionen aunque el foco haya quedado debajo de la cubierta. Con diálogos
+    # anidados manda el de arriba de la pila.
+    _TECLAS = ("<Escape>", "<Return>", "<KP_Enter>", "<Tab>", "<Shift-Tab>", "<ISO_Left_Tab>")
+
+    def _instalar_teclas(self) -> None:
+        r = self._raiz
+        r.bind("<Escape>", lambda _e: (self.cancelar(), "break")[1])
+        r.bind("<Return>", self._enter)
+        r.bind("<KP_Enter>", self._enter)
+        r.bind("<Tab>", lambda e: self._ciclar(e, 1))
+        for seq in ("<Shift-Tab>", "<ISO_Left_Tab>"):
+            r.bind(seq, lambda e: self._ciclar(e, -1))
+
+    def _quitar_teclas(self) -> None:
+        for seq in self._TECLAS:
+            self._raiz.unbind(seq)
+
+    # -- mostrar / cerrar ----------------------------------------------------------
+    def _bloquear_menu(self) -> None:
+        nombre = self._raiz.cget("menu")
+        if not nombre:
+            return
+        barra = self._raiz.nametowidget(nombre)
+        fin = barra.index("end")
+        for i in range(0 if fin is None else fin + 1):
+            if barra.type(i) == "cascade":
+                self._menu_previo.append((barra, i, barra.entrycget(i, "state")))
+                barra.entryconfigure(i, state="disabled")
+
+    def _restaurar_menu(self) -> None:
+        for barra, i, estado in self._menu_previo:
+            try:
+                barra.entryconfigure(i, state=estado)
+            except tk.TclError:
+                pass
+        self._menu_previo.clear()
+
     def mostrar(self):
-        # Ubicar antes de mostrar: centrada sobre la ventana principal.
+        self.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.lift()
+        self._abierto = True
+        pila = self._pila()
+        pila.append(self)
+        self._raiz.dialogos_abiertos = len(pila)
+        self._bloquear_menu()
+        self._instalar_teclas()
         self.update_idletasks()
-        p = self._principal
-        x = p.winfo_rootx() + (p.winfo_width() - self.winfo_reqwidth()) // 2
-        y = p.winfo_rooty() + (p.winfo_height() - self.winfo_reqheight()) // 3
-        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
-        self.deiconify()
-        try:
-            self.wait_visibility()
-            self.grab_set()
-        except tk.TclError:
-            pass  # la ventana se cerró antes de mostrarse
-        self.focus_force()
-        self.wait_window()
+        actual = self.focus_get()
+        foco = actual if actual is not None and self._contiene(actual) else None
+        (foco or (self._enfocables() or [self])[0]).focus_force()
+        self.wait_window(self)
         return self.resultado
+
+    def _pila(self) -> list:
+        if not hasattr(self._raiz, "pila_dialogos"):
+            self._raiz.pila_dialogos = []
+        return self._raiz.pila_dialogos
+
+    def destroy(self) -> None:
+        if self._abierto:
+            self._abierto = False
+            self._restaurar_menu()
+            pila = self._pila()
+            if self in pila:
+                pila.remove(self)
+            self._raiz.dialogos_abiertos = len(pila)
+            if pila:
+                pila[-1]._instalar_teclas()
+            else:
+                self._quitar_teclas()
+        super().destroy()
 
     def error(self, texto: str) -> None:
         self.lbl_error.configure(text=texto)

@@ -80,7 +80,10 @@ class MenuPrincipal:
         return indice
 
     def _invocar(self, menu: tk.Menu, indice: int) -> str:
-        # El atajo respeta el estado del elemento: deshabilitado no hace nada.
+        # El atajo respeta el estado del elemento: deshabilitado no hace nada,
+        # y con un diálogo abierto ningún atajo actúa.
+        if getattr(self.raiz, "dialogos_abiertos", 0):
+            return "break"
         self.actualizar()
         if menu.entrycget(indice, "state") != "disabled":
             menu.invoke(indice)
