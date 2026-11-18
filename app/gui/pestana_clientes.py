@@ -98,8 +98,7 @@ class PestanaClientes(ttk.Frame):
         ttk.Entry(frm_base, textvariable=self.var_base, state="readonly").pack(
             side="left", fill="x", expand=True)
         ttk.Button(frm_base, text="Cambiar…", command=self.cambiar_base).pack(side="left", padx=6)
-        ttk.Button(frm_base, text="Abrir", command=lambda: self._abrir(self.registro.base)).pack(
-            side="left")
+        ttk.Button(frm_base, text="Abrir", command=self.abrir_base).pack(side="left")
         self.lbl_nube = ttk.Label(self, text="", foreground="#b9770e", wraplength=900,
                                   justify="left")
         self.lbl_nube.pack(fill="x", padx=12)
@@ -226,13 +225,13 @@ class PestanaClientes(ttk.Frame):
         if c and c.activo:
             self.contexto.fijar(c)
 
-    def cambiar_clave(self) -> None:
-        c = self._seleccionado()
+    def cambiar_clave(self, c: clientes.Cliente | None = None) -> None:
+        c = c or self._seleccionado()
         if c:
             cambiar_clave_de(self, self.contexto, c)
 
-    def renombrar(self) -> None:
-        c = self._seleccionado()
+    def renombrar(self, c: clientes.Cliente | None = None) -> None:
+        c = c or self._seleccionado()
         if not c:
             return
         nombre = simpledialog.askstring(TITULO, f"Nuevo nombre para {c.ruc}:",
@@ -246,8 +245,8 @@ class PestanaClientes(ttk.Frame):
             return
         self.contexto.lista_cambio()
 
-    def alternar_activo(self) -> None:
-        c = self._seleccionado()
+    def alternar_activo(self, c: clientes.Cliente | None = None) -> None:
+        c = c or self._seleccionado()
         if not c:
             return
         if c.activo and not messagebox.askyesno(
@@ -257,13 +256,16 @@ class PestanaClientes(ttk.Frame):
         self.registro.fijar_activo(c.id, not c.activo)
         self.contexto.lista_cambio()
 
-    def abrir_carpeta(self) -> None:
-        c = self._seleccionado()
+    def abrir_carpeta(self, c: clientes.Cliente | None = None) -> None:
+        c = c or self._seleccionado()
         if c:
             try:
                 self._abrir(self.registro.asegurar_carpeta(c))
             except OSError as e:
                 self._error(e)
+
+    def abrir_base(self) -> None:
+        self._abrir(self.registro.base)
 
     def _abrir(self, ruta: Path) -> None:
         try:

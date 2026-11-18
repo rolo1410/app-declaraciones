@@ -1,4 +1,4 @@
-"""Ventana principal: selector de cliente y cuatro pestañas.
+"""Ventana principal: menú, selector de cliente y cuatro pestañas.
 
     Clientes  ·  Descarga  →  Análisis  →  Declaración
 
@@ -14,6 +14,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from .contexto import ContextoCliente
+from .menu_principal import MenuPrincipal
 from .pestana_analisis import PestanaAnalisis
 from .pestana_clientes import PestanaClientes
 from .pestana_declaracion import PestanaDeclaracion
@@ -51,6 +52,14 @@ class App(tk.Tk):
         notebook.add(self.pestana_descarga, text="  1 · Descarga  ")
         notebook.add(self.pestana_analisis, text="  2 · Análisis  ")
         notebook.add(self.pestana_declaracion, text="  3 · Declaración  ")
+
+        # Barra de menús: «Clientes» (gestión del registro) e «Ir» (pestañas).
+        self.menu = MenuPrincipal(self, ctx, self.pestana_clientes, [
+            ("Clientes", self._ir_a_clientes),
+            ("1 · Descarga", lambda: notebook.select(self.pestana_descarga)),
+            ("2 · Análisis", lambda: notebook.select(self.pestana_analisis)),
+            ("3 · Declaración", lambda: notebook.select(self.pestana_declaracion)),
+        ])
 
         # En macOS, una app lanzada fuera de un bundle .app no se activa sola:
         # el primer clic solo enfoca la ventana en vez de accionar el control.
