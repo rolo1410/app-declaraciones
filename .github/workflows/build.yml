@@ -60,7 +60,19 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: python -m pytest tests/ -q
+      - name: Pruebas
+        if: runner.os != 'macOS'
+        run: python -m pytest tests/ -q
+      # En macOS, Tk (aqua) puede colgarse o cerrarse con «Segmentation fault» si
+      # en un mismo proceso se crean y destruyen varias ventanas raíz: las
+      # pruebas de interfaz (marca «gui») corren cada una en su propio proceso.
+      - name: Pruebas (macOS, interfaz en procesos separados)
+        if: runner.os == 'macOS'
+        run: |
+          python -m pytest tests/ -q -m "not gui"
+          for prueba in $(python -m pytest tests/ -q -m gui --collect-only | grep "::"); do
+            python -m pytest -q -p no:cacheprovider "$prueba"
+          done
 
   compilar:
     # Solo Linux y Windows: son las plataformas que se pueden distribuir sin
@@ -101,6 +113,17 @@ jobs:
         run: |
           ./dist/ComprobantesSRI/ComprobantesSRI --selftest || true
           cat "${TMPDIR:-/tmp}/sri_selftest.log" 2>/dev/null || true
+
+      # Lo mismo en Windows: el .exe debe arrancar y cargar cifrado, llavero
+      # (Administrador de credenciales) y Tk. Tampoco falla el job.
+      - name: Verificar que el binario arranca (Windows)
+        if: matrix.nombre == 'windows'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist/ComprobantesSRI/ComprobantesSRI.exe" -ArgumentList "--selftest" -Wait -PassThru
+          Write-Host "Código de salida: $($p.ExitCode)"
+          Get-Content "$env:TEMP/sri_selftest.log" -ErrorAction SilentlyContinue
 
       # Se comprime la CARPETA, no su contenido: con "dist/ComprobantesSRI/*"
       # el zip queda plano y al extraerlo vuelca ~1200 archivos sueltos.

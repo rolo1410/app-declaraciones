@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import sys
 
+import pytest
+
 from app.gui.dialogos import tipos_archivo
 
 TIPOS = (("Trabajo", "*.iva.json"), ("JSON", "*.json"), ("Todos", "*.*"))
@@ -18,6 +20,7 @@ def test_en_otros_sistemas_no_cambia(monkeypatch):
     assert tipos_archivo(*TIPOS) == list(TIPOS)
 
 
+@pytest.mark.gui
 def test_dialogo_dentro_de_la_ventana_bloquea_el_menu_y_se_limpia():
     import pytest
 
@@ -26,16 +29,24 @@ def test_dialogo_dentro_de_la_ventana_bloquea_el_menu_y_se_limpia():
         raiz = tk.Tk()
     except tk.TclError:
         pytest.skip("sin pantalla para Tk")
-    from app.gui.dialogos import DialogoTexto
+    from app.gui.dialogos import DialogoTexto, tras_el_clic
 
     barra = tk.Menu(raiz)
-    barra.add_cascade(label="Clientes", menu=tk.Menu(barra, tearoff=False))
+    submenu = tk.Menu(barra, tearoff=False)
+    abiertos_desde_menu = []
+    submenu.add_command(label="Nuevo…", command=tras_el_clic(
+        raiz, lambda: abiertos_desde_menu.append(True)))
+    barra.add_cascade(label="Clientes", menu=submenu)
     raiz.configure(menu=barra)
     vistos = {}
 
     def durante():
         vistos["menu"] = barra.entrycget(0, "state")
         vistos["abiertos"] = raiz.dialogos_abiertos
+        submenu.invoke(0)  # lo que abre el menú no actúa con un formulario abierto
+        raiz.after(20, terminar)
+
+    def terminar():
         dialogo.var.set("Nuevo nombre")
         dialogo.aceptar()
 
@@ -43,7 +54,12 @@ def test_dialogo_dentro_de_la_ventana_bloquea_el_menu_y_se_limpia():
     raiz.after(50, durante)
     try:
         assert dialogo.mostrar() == "Nuevo nombre"
-        assert vistos == {"menu": "disabled", "abiertos": 1}
+        assert vistos["abiertos"] == 1
+        assert abiertos_desde_menu == []
+        # El gris de la barra de menús es solo visual; en Windows Tk no lo refleja
+        # en la barra (allí el bloqueo lo hace tras_el_clic, comprobado arriba).
+        if sys.platform != "win32":
+            assert vistos["menu"] == "disabled"
         assert barra.entrycget(0, "state") == "normal"
         assert raiz.dialogos_abiertos == 0
         assert raiz.bind("<Escape>") == ""
@@ -51,6 +67,7 @@ def test_dialogo_dentro_de_la_ventana_bloquea_el_menu_y_se_limpia():
         raiz.destroy()
 
 
+@pytest.mark.gui
 def test_solo_un_formulario_modal_a_la_vez():
     import pytest
 
