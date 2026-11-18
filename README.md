@@ -192,8 +192,9 @@ terminar, la app pasa a **Declaración** con esos XML ya cargados.
   `resultados/<AAAA-MM>/envio_<fecha>/` y el envío se anota en la bitácora.
 
 ### Configuración
-Formulario modal (botón «Configuración» arriba a la derecha, ⌘, en macOS o
-«Clientes → Configuración…»):
+Formulario modal: menú **Configuración → Configuración…** (⌘, en macOS,
+Ctrl+, en Windows y Linux). En ese mismo menú están la llave maestra, la ruta
+de los archivos y la importación del `.env`.
 
 - **Quien prepara la declaración:** nombre o estudio, cédula/RUC, cargo,
   n.º de registro, contacto y logo. Van al pie del PDF y a la firma del correo.

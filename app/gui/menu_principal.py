@@ -1,14 +1,14 @@
 """Barra de menús de la ventana principal.
 
-    Clientes   Ir   Ventana
+    Clientes   Configuración   Ir   Ventana
 
-«Clientes» reúne todo lo que se hace con el registro de contribuyentes: alta,
-cambio de cliente activo, acciones sobre el cliente activo (clave, nombre,
-carpetas, desactivar), llave maestra y ruta base. Las acciones son las mismas
-de la pestaña «Clientes»; el menú las aplica al cliente *activo* y la pestaña a
-la fila seleccionada en la tabla.
+«Clientes»: alta de clientes y acciones sobre el cliente elegido en la
+cuadrícula (clave, datos, carpetas, desactivar).
 
-«Ir» cambia de pestaña con atajos de teclado (⌘/Ctrl + 0…3).
+«Configuración»: el formulario de Configuración (⌘, / Ctrl+,) y lo que no es de
+un cliente: llave maestra y respaldo, ruta de los archivos e importación del .env.
+
+«Ir»: Clientes (⌘/Ctrl+0) y las etapas del mes (⌘/Ctrl+1 y 2).
 
 En macOS la barra aparece en la parte superior de la pantalla; en Windows y
 Linux, debajo del título de la ventana.
@@ -62,6 +62,7 @@ class MenuPrincipal:
 
         self.barra = tk.Menu(raiz)
         self._menu_clientes()
+        self._menu_configuracion()
         self._menu_ir(pestanas)
         self._menu_ventana()
         raiz.configure(menu=self.barra)
@@ -113,31 +114,37 @@ class MenuPrincipal:
             self._agregar(m, "Desactivar…", lambda: self._con_activo(p.alternar_activo)),
         ]
 
-        m.add_separator()
+        self.barra.add_cascade(label="Clientes", menu=m)
+
+    def _menu_configuracion(self) -> None:
+        """Ajustes de la app y lo que no es de un cliente: llave, ruta y .env."""
+        m = tk.Menu(self.barra, tearoff=False, postcommand=self.actualizar)
+        self.m_config = m
+        p, r = self.clientes, self.raiz
+        if self.al_configurar is not None:
+            if ES_MAC:
+                # ⌘, ya lo atiende «Ajustes…» del menú de la app (ShowPreferences):
+                # aquí solo se muestra el atajo.
+                m.add_command(label="Configuración…", accelerator="Command-,",
+                              command=tras_el_clic(r, self.al_configurar))
+            else:
+                self._agregar(m, "Configuración…", self.al_configurar, "comma")
+            m.add_separator()
         llave = tk.Menu(m, tearoff=False)
-        r = self.raiz
         llave.add_command(label="Exportar copia de emergencia…",
                           command=tras_el_clic(r, p.exportar_copia))
         llave.add_command(label="Restaurar llave…", command=tras_el_clic(r, p.restaurar_copia))
         llave.add_separator()
         llave.add_command(label="Respaldo completo…", command=tras_el_clic(r, p.respaldo_completo))
         m.add_cascade(label="Llave maestra y respaldo", menu=llave)
-
         base = tk.Menu(m, tearoff=False)
         base.add_command(label="Cambiar ruta base…", command=tras_el_clic(r, p.cambiar_base))
         base.add_command(label="Abrir ruta base", command=p.abrir_base)
         m.add_cascade(label="Ruta base de los archivos", menu=base)
-
         m.add_separator()
         m.add_command(label="Importar clave del .env…", command=tras_el_clic(r, p.importar_env))
         self.i_env = m.index("end")
-        if self.al_configurar is not None:
-            m.add_separator()
-            # En macOS ⌘, ya lo da «Ajustes…» del menú de la app (tk::mac::ShowPreferences).
-            self._agregar(m, "Configuración…", self.al_configurar,
-                          None if ES_MAC else "comma")
-
-        self.barra.add_cascade(label="Clientes", menu=m)
+        self.barra.add_cascade(label="Configuración", menu=m)
 
     def _menu_ir(self, pestanas: list[tuple[str, Callable[[], None]]]) -> None:
         m = tk.Menu(self.barra, tearoff=False)
@@ -181,7 +188,7 @@ class MenuPrincipal:
             heredada = preferencias.clave_heredada()
         except Exception:  # noqa: BLE001 - leer el .env nunca debe romper el menú
             heredada = None
-        m.entryconfigure(self.i_env, state="normal" if heredada else "disabled")
+        self.m_config.entryconfigure(self.i_env, state="normal" if heredada else "disabled")
 
 
     # --------------------------------------------------------------- acciones

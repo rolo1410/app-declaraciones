@@ -4,9 +4,10 @@ El inicio es «Clientes»: ahí se elige cliente y mes. Las etapas del mes
 (Descarga y Declaración) se abren desde la ficha del cliente, y la barra
 superior muestra en cada momento dónde se está:
 
-    Inicio:        Clientes  (descripción)                       [Configuración]
-    Trabajo:       [‹ Clientes]  NOMBRE · octubre 2026  [1 Descarga][2 Declaración]
-    Configuración: [‹ Clientes]  Configuración
+    Inicio:   Clientes  (descripción)
+    Trabajo:  [‹ Clientes]  NOMBRE · octubre 2026        [1 Descarga][2 Declaración]
+
+Configuración no está aquí: se abre desde el menú (⌘, en macOS).
 """
 from __future__ import annotations
 
@@ -108,7 +109,7 @@ class Pagina:
     widget: tk.Widget
     titulo: str
     descripcion: str = ""
-    tipo: str = "inicio"        # inicio | etapa | ajustes
+    tipo: str = "inicio"        # inicio | etapa
     numero: str = ""            # para las etapas: «1», «2»
     extra: dict = field(default_factory=dict)
 
@@ -117,7 +118,7 @@ class BarraSuperior(ttk.Frame):
     """Título o miga de pan («‹ Clientes  NOMBRE · mes») y etapas del mes."""
 
     def __init__(self, master, raiz, paginas: Paginas, contexto,
-                 al_volver: Callable[[], None], al_configurar: Callable[[], None]) -> None:
+                 al_volver: Callable[[], None]) -> None:
         super().__init__(master, padding=(18, 12, 18, 10))
         self.raiz, self.paginas, self.contexto = raiz, paginas, contexto
         self.c = colores(raiz)
@@ -133,10 +134,8 @@ class BarraSuperior(ttk.Frame):
         self.lbl_desc = ttk.Label(self.izq, foreground="gray")
         self.lbl_desc.pack(anchor="w", pady=(2, 0))
 
-        self.btn_config = ttk.Button(self, text="Configuración", command=al_configurar)
-        self.btn_config.pack(side="right")
         self.pasos = tk.Frame(self, background=self.c["fondo"])
-        self.pasos.pack(side="right", padx=(0, 16))
+        self.pasos.pack(side="right")
 
         paginas.bind("<<NotebookTabChanged>>", lambda _e: self.actualizar(), add="+")
         contexto.al_cambiar_cliente(self.actualizar)
@@ -169,17 +168,9 @@ class BarraSuperior(ttk.Frame):
             self.pasos.pack_forget()
             self.lbl_titulo.configure(text=pagina.titulo)
             self.lbl_desc.configure(text=pagina.descripcion)
-            self.btn_config.pack(side="right")
             return
         self.btn_volver.pack(side="left", padx=(0, 14), before=self.izq)
-        if pagina.tipo == "ajustes":
-            self.pasos.pack_forget()
-            self.btn_config.pack_forget()
-            self.lbl_titulo.configure(text=pagina.titulo)
-            self.lbl_desc.configure(text=pagina.descripcion)
-            return
-        self.btn_config.pack(side="right")
-        self.pasos.pack(side="right", padx=(0, 16), before=self.btn_config)
+        self.pasos.pack(side="right")
         cliente = self.contexto.cliente
         if cliente is None:
             self.lbl_titulo.configure(text="Sin cliente")

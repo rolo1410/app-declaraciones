@@ -423,11 +423,10 @@ class PestanaClientes(ttk.Frame):
             side="left", padx=(6, 0))
         ttk.Button(botones, text="Carpeta", command=lambda: a.abrir_carpeta(cliente)).pack(
             side="left", padx=(6, 0))
-        # Botón directo (no un menú «Más»): un menú nativo dentro de una página
-        # que se oculta y se vuelve a construir colgaba Tk en macOS.
-        ttk.Button(botones, text="Reactivar" if not cliente.activo else "Desactivar…",
-                   command=tras_el_clic(self, lambda: a.alternar_activo(cliente))).pack(
-            side="left", padx=(6, 0))
+        if not cliente.activo:  # desactivar está en el menú «Clientes»
+            ttk.Button(botones, text="Reactivar",
+                       command=tras_el_clic(self, lambda: a.alternar_activo(cliente))).pack(
+                side="left", padx=(6, 0))
 
         if not periodo:
             return

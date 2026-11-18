@@ -19,7 +19,6 @@ from .contexto import ContextoCliente
 from .menu_principal import MenuPrincipal
 from .navegacion import BarraSuperior, Pagina, Paginas
 from .pestana_clientes import Navegar, PestanaClientes, periodo_por_defecto
-from .dialogos import tras_el_clic
 from .pestana_configuracion import abrir_configuracion
 from .pestana_declaracion import PestanaDeclaracion
 from .pestana_descarga import PestanaDescarga
@@ -51,8 +50,7 @@ class App(tk.Tk):
         paginas = Paginas(self)
         paginas.pack(fill="both", expand=True)
         self.notebook = paginas
-        self.barra = BarraSuperior(barra, self, paginas, ctx, al_volver=self.ir_a_clientes,
-                                   al_configurar=tras_el_clic(self, self._ir_a_configuracion))
+        self.barra = BarraSuperior(barra, self, paginas, ctx, al_volver=self.ir_a_clientes)
         self.barra.pack(fill="x")
 
         self.pestana_clientes = PestanaClientes(paginas, ctx, self.acciones, Navegar(
