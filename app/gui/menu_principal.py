@@ -22,6 +22,7 @@ from typing import Callable
 
 from ..core import preferencias
 from .contexto import ContextoCliente
+from .dialogos import tras_el_clic
 from .pestana_clientes import PestanaClientes
 from .selector_cliente import SIN_CLIENTE, etiqueta_cliente
 
@@ -71,7 +72,7 @@ class MenuPrincipal:
     def _agregar(self, menu: tk.Menu, etiqueta: str, accion: Callable[[], None],
                  tecla: str | None = None, shift: bool = False) -> int:
         """Añade un comando (con atajo opcional) y devuelve su índice."""
-        menu.add_command(label=etiqueta, command=accion)
+        menu.add_command(label=etiqueta, command=tras_el_clic(self.raiz, accion))
         indice = menu.index("end")
         if tecla:
             texto, evento = _atajo(tecla, shift)
@@ -114,19 +115,21 @@ class MenuPrincipal:
 
         m.add_separator()
         llave = tk.Menu(m, tearoff=False)
-        llave.add_command(label="Exportar copia de emergencia…", command=p.exportar_copia)
-        llave.add_command(label="Restaurar llave…", command=p.restaurar_copia)
+        r = self.raiz
+        llave.add_command(label="Exportar copia de emergencia…",
+                          command=tras_el_clic(r, p.exportar_copia))
+        llave.add_command(label="Restaurar llave…", command=tras_el_clic(r, p.restaurar_copia))
         llave.add_separator()
-        llave.add_command(label="Respaldo completo…", command=p.respaldo_completo)
+        llave.add_command(label="Respaldo completo…", command=tras_el_clic(r, p.respaldo_completo))
         m.add_cascade(label="Llave maestra y respaldo", menu=llave)
 
         base = tk.Menu(m, tearoff=False)
-        base.add_command(label="Cambiar ruta base…", command=p.cambiar_base)
+        base.add_command(label="Cambiar ruta base…", command=tras_el_clic(r, p.cambiar_base))
         base.add_command(label="Abrir ruta base", command=p.abrir_base)
         m.add_cascade(label="Ruta base de los archivos", menu=base)
 
         m.add_separator()
-        m.add_command(label="Importar clave del .env…", command=p.importar_env)
+        m.add_command(label="Importar clave del .env…", command=tras_el_clic(r, p.importar_env))
         self.i_env = m.index("end")
 
         self.barra.add_cascade(label="Clientes", menu=m)

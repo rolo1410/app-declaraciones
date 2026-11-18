@@ -163,6 +163,17 @@ class _Dialogo(ttk.Frame):
         self.destroy()
 
 
+def tras_el_clic(widget, accion):
+    """``command=`` para un botón o menú que abre un diálogo.
+
+    En macOS, Tk mantiene el mouse «capturado» por el botón pulsado hasta que
+    termina de atender el clic. Si el diálogo espera respuesta *dentro* de ese
+    clic, la captura no se suelta y los clics no llegan al formulario. Se abre
+    un instante después, ya fuera del clic.
+    """
+    return lambda: widget.after(1, accion)
+
+
 def _entrada_clave(padre, fila: int, etiqueta: str) -> tk.StringVar:
     ttk.Label(padre, text=etiqueta).grid(row=fila, column=0, sticky="w", pady=4)
     var = tk.StringVar()

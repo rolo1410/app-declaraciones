@@ -43,6 +43,10 @@ class PestanaClientes(ttk.Frame):
         self.after(400, self._ofrecer_importar_env)
 
     # ----------------------------------------------------------------- interfaz
+    def _tras(self, accion):
+        """Los botones que abren un diálogo lo hacen después del clic."""
+        return dialogos.tras_el_clic(self, accion)
+
     def _construir(self) -> None:
         pad = {"padx": 6, "pady": 4}
 
@@ -56,7 +60,7 @@ class PestanaClientes(ttk.Frame):
         self.var_inactivos = tk.BooleanVar(value=False)
         ttk.Checkbutton(barra, text="Mostrar desactivados", variable=self.var_inactivos,
                         command=self.refrescar).pack(side="left", padx=8)
-        ttk.Button(barra, text="Nuevo cliente…", command=self.nuevo).pack(side="right")
+        ttk.Button(barra, text="Nuevo cliente…", command=self._tras(self.nuevo)).pack(side="right")
 
         self.banner_env = ttk.Frame(self)  # se muestra si hay SRI_CLAVE en .env
 
@@ -84,9 +88,9 @@ class PestanaClientes(ttk.Frame):
         acciones = ttk.Frame(self)
         acciones.pack(fill="x", **pad)
         self.btn_usar = ttk.Button(acciones, text="Usar este cliente", command=self.usar)
-        self.btn_clave = ttk.Button(acciones, text="Cambiar clave…", command=self.cambiar_clave)
-        self.btn_nombre = ttk.Button(acciones, text="Renombrar…", command=self.renombrar)
-        self.btn_activo = ttk.Button(acciones, text="Desactivar", command=self.alternar_activo)
+        self.btn_clave = ttk.Button(acciones, text="Cambiar clave…", command=self._tras(self.cambiar_clave))
+        self.btn_nombre = ttk.Button(acciones, text="Renombrar…", command=self._tras(self.renombrar))
+        self.btn_activo = ttk.Button(acciones, text="Desactivar", command=self._tras(self.alternar_activo))
         self.btn_carpeta = ttk.Button(acciones, text="Abrir carpeta", command=self.abrir_carpeta)
         for b in (self.btn_usar, self.btn_clave, self.btn_nombre, self.btn_activo, self.btn_carpeta):
             b.pack(side="left", padx=(0, 6))
@@ -97,7 +101,7 @@ class PestanaClientes(ttk.Frame):
         self.var_base = tk.StringVar()
         ttk.Entry(frm_base, textvariable=self.var_base, state="readonly").pack(
             side="left", fill="x", expand=True)
-        ttk.Button(frm_base, text="Cambiar…", command=self.cambiar_base).pack(side="left", padx=6)
+        ttk.Button(frm_base, text="Cambiar…", command=self._tras(self.cambiar_base)).pack(side="left", padx=6)
         ttk.Button(frm_base, text="Abrir", command=self.abrir_base).pack(side="left")
         self.lbl_nube = ttk.Label(self, text="", foreground="#b9770e", wraplength=900,
                                   justify="left")
@@ -108,12 +112,12 @@ class PestanaClientes(ttk.Frame):
         frm_llave.pack(fill="x", **pad)
         self.lbl_llave = ttk.Label(frm_llave, text="", wraplength=520, justify="left")
         self.lbl_llave.pack(side="left", fill="x", expand=True)
-        ttk.Button(frm_llave, text="Respaldo completo…", command=self.respaldo_completo).pack(
+        ttk.Button(frm_llave, text="Respaldo completo…", command=self._tras(self.respaldo_completo)).pack(
             side="right")
-        ttk.Button(frm_llave, text="Restaurar llave…", command=self.restaurar_copia).pack(
+        ttk.Button(frm_llave, text="Restaurar llave…", command=self._tras(self.restaurar_copia)).pack(
             side="right", padx=6)
         ttk.Button(frm_llave, text="Exportar copia de emergencia…",
-                   command=self.exportar_copia).pack(side="right")
+                   command=self._tras(self.exportar_copia)).pack(side="right")
 
     # ------------------------------------------------------------------ datos
     def refrescar(self) -> None:
@@ -382,7 +386,7 @@ class PestanaClientes(ttk.Frame):
             text=f"⚠ Hay una clave del SRI en texto plano en {origen} (SRI_CLAVE). "
                  "Impórtela a un cliente para guardarla cifrada.",
         ).pack(side="left", fill="x", expand=True)
-        ttk.Button(self.banner_env, text="Importar…", command=self.importar_env).pack(side="right")
+        ttk.Button(self.banner_env, text="Importar…", command=self._tras(self.importar_env)).pack(side="right")
         self.banner_env.pack(fill="x", padx=6, pady=4, after=self.winfo_children()[0])
 
     def importar_env(self) -> None:
