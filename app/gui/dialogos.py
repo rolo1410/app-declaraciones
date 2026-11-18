@@ -17,8 +17,10 @@ class _Dialogo(tk.Toplevel):
 
     En macOS no se usa ``transient``: Tk 8.6 convierte la ventana en «hija» de
     la principal y, al arrastrarla, la mueve con retraso y la devuelve a su
-    sitio. Allí se usa el estilo nativo de diálogo modal movible y se la
-    mantiene delante de la ventana principal mientras esté abierta.
+    sitio. Tampoco el estilo ``moveableModal`` (API «unsupported» de Tk): tras
+    arrastrar, el cursor se queda ocupado y el formulario no responde. Basta
+    una ventana normal con ``grab``: Tk la devuelve al frente si se hace clic
+    en la principal.
     """
 
     def __init__(self, padre, titulo: str) -> None:
@@ -26,14 +28,7 @@ class _Dialogo(tk.Toplevel):
         self.withdraw()  # se muestra ya ubicada, en mostrar()
         self.title(titulo)
         self._principal = padre.winfo_toplevel()
-        self._id_foco = None
-        if sys.platform == "darwin":
-            try:
-                self.tk.call("::tk::unsupported::MacWindowStyle", "style", self._w,
-                             "moveableModal", "")
-            except tk.TclError:
-                pass
-        else:
+        if sys.platform != "darwin":
             self.transient(self._principal)
         self.resizable(False, False)
         self.resultado = None
@@ -60,9 +55,6 @@ class _Dialogo(tk.Toplevel):
         y = p.winfo_rooty() + (p.winfo_height() - self.winfo_reqheight()) // 3
         self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
         self.deiconify()
-        if sys.platform == "darwin":
-            # Sin «transient», un clic en la ventana principal no debe taparla.
-            self._id_foco = p.bind("<FocusIn>", lambda _e: self.lift(), add="+")
         try:
             self.wait_visibility()
             self.grab_set()
@@ -71,15 +63,6 @@ class _Dialogo(tk.Toplevel):
         self.focus_force()
         self.wait_window()
         return self.resultado
-
-    def destroy(self) -> None:
-        if self._id_foco is not None:
-            try:
-                self._principal.unbind("<FocusIn>", self._id_foco)
-            except tk.TclError:
-                pass
-            self._id_foco = None
-        super().destroy()
 
     def error(self, texto: str) -> None:
         self.lbl_error.configure(text=texto)
